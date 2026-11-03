@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f5f8b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Températures">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Températures halls Eurexpo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout : bandeau de synthèse, puis tuiles par secteur (comme on lit le plan), puis historique du jour en tableau */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --ink:#18212b; --muted:#5d6b78; --line:#d5dce3;
+  --accent:#1f5f8b;
+  --cold:#2f6fb8; --cold-bg:#e3eefa;
+  --ok:#2d7a5a; --ok-bg:#e2f2ea;
+  --hot:#c4521d; --hot-bg:#fbe9df;
+  --cold-pin:#2463ad; --ok-pin:#237350; --hot-pin:#c0491a; --map-filter:none;
+  --font-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-num:"Barlow Semi Condensed","Barlow",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#11171d; --surface:#1a222b; --ink:#e6ecf1; --muted:#93a1ae; --line:#2c3743;
+  --accent:#6fb0de;
+  --cold:#7fb2ee; --cold-bg:#1a2c42; --ok:#6cc79c; --ok-bg:#16302a; --hot:#f09a6c; --hot-bg:#3a2218;
+  --map-filter:invert(.9) hue-rotate(180deg) brightness(.95);
+  color-scheme:dark}}
+:root.__unused{
+  --bg:#11171d; --surface:#1a222b; --ink:#e6ecf1; --muted:#93a1ae; --line:#2c3743;
+  --accent:#6fb0de;
+  --cold:#7fb2ee; --cold-bg:#1a2c42; --ok:#6cc79c; --ok-bg:#16302a; --hot:#f09a6c; --hot-bg:#3a2218;
+  --map-filter:invert(.9) hue-rotate(180deg) brightness(.95);
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.45}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:22px}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font-family:var(--font-num);font-weight:700;font-size:1.7rem;margin:0;letter-spacing:.01em;text-wrap:balance}
+.sub{color:var(--muted);margin:2px 0 0}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:inherit}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:600}
+.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select,input[type=text],input[type=number],input[type=datetime-local]{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+
+.summary{display:flex;flex-wrap:wrap;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.summary>div{flex:1 1 140px;padding:12px 16px;border-right:1px solid var(--line);min-width:0}
+.summary>div:last-child{border-right:0}
+.summary .v{font-size:1.6rem;font-weight:600;line-height:1.1;margin-top:2px}
+.summary .v small{font-size:.85rem;color:var(--muted);font-weight:500;font-family:var(--font-body)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;color:var(--muted);font-size:.88rem}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.seuils{display:inline-flex;gap:6px;align-items:center}
+.seuils input{width:64px;padding:4px 6px}
+
+.mapcard{padding:12px}
+.mapscroll{overflow-x:auto;border-radius:8px}
+.map{position:relative;min-width:640px;container-type:inline-size}
+.map img{display:block;filter:var(--map-filter);width:100%;max-width:none;height:auto;border-radius:8px}
+.pin{position:absolute;transform:translate(-50%,-50%);font-family:var(--font-num);font-weight:700;font-variant-numeric:tabular-nums;font-size:clamp(10px,1.75cqw,19px);line-height:1;padding:.28em .42em;border-radius:.35em;color:#fff;background:var(--muted);box-shadow:0 1px 3px rgba(0,0,0,.3);white-space:nowrap;cursor:default}
+.pin.froid{background:var(--cold-pin)} .pin.ok{background:var(--ok-pin)} .pin.chaud{background:var(--hot-pin)}
+.pin small{display:block;font-family:var(--font-body);font-weight:500;font-size:.5em;opacity:.9;margin-top:.15em;text-align:center}
+.sectors{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.sector{display:grid;gap:8px;align-content:start}
+.sector h2{margin:0;font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600}
+.tiles{display:grid;gap:6px}
+.tile{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 12px;padding:9px 12px;border-radius:9px;background:var(--surface);border:1px solid var(--line)}
+.tile.froid{background:var(--cold-bg);border-color:transparent}
+.tile.ok{background:var(--ok-bg);border-color:transparent}
+.tile.chaud{background:var(--hot-bg);border-color:transparent}
+.tile .name{font-weight:500;min-width:0}
+.tile .t{font-size:1.65rem;font-weight:600;line-height:1;text-align:right}
+.froid .t{color:var(--cold)} .ok .t{color:var(--ok)} .chaud .t{color:var(--hot)}
+.tile .meta{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.82rem}
+.tile .delta{font-size:.82rem;color:var(--muted);text-align:right}
+.spark{display:block}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.card h2{margin:0 0 10px;font-family:var(--font-num);font-size:1.15rem;font-weight:600}
+.histhead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.histhead h2{margin:0}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--surface)}
+thead th{font-weight:600;color:var(--muted);font-size:.82rem}
+td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weight:600}
+.del{border:0;background:none;color:var(--muted);cursor:pointer;font-size:.75rem;padding:0;text-decoration:underline}
+.del:hover{color:var(--hot)}
+
+.empty{padding:28px;text-align:center;color:var(--muted)}
+.note{color:var(--muted);font-size:.88rem;margin:0}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px;font-weight:500;z-index:30}
+
+/* Saisie */
+.overlay{position:fixed;inset:0;background:rgba(10,16,22,.45);z-index:20;display:flex;justify-content:center;align-items:flex-start;overflow-y:auto;padding-block:calc(16px + env(safe-area-inset-top,0px)) calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+.form{background:var(--surface);border-radius:14px;width:100%;max-width:640px;padding:18px;display:grid;gap:14px}
+.form h2{margin:0;font-family:var(--font-num);font-size:1.3rem}
+.formrow{display:flex;flex-wrap:wrap;gap:12px}
+.formrow label{display:grid;gap:4px;flex:1 1 180px}
+.fgroup{display:grid;gap:6px}
+.fgroup h3{margin:6px 0 0;font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.fpoint{display:grid;grid-template-columns:1fr 92px;align-items:center;gap:10px}
+.fpoint input{text-align:right;font-family:var(--font-num);font-size:1.15rem;font-variant-numeric:tabular-nums}
+.fpoint input.bad{border-color:var(--hot)}
+.formbar{display:flex;gap:8px;justify-content:flex-end;position:sticky;bottom:0;background:var(--surface);padding-top:8px}
+.err{color:var(--hot);font-size:.9rem;margin:0}
+@media (prefers-reduced-motion:no-preference){.tile{transition:background .3s}}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Températures des halls</h1>
+      <p class="sub" id="sub">Eurexpo Lyon · relevés Dalkia</p>
+    </div>
+    <div class="actions">
+      <select id="day" aria-label="Journée affichée"></select>
+      <button class="btn" id="copy">Copier le résumé</button>
+      <button class="btn" id="wa">Envoyer le plan sur WhatsApp</button>
+      <button class="btn primary" id="new">Nouveau relevé</button>
+    </div>
+  </header>
+
+  <section class="summary" id="summary" aria-label="Synthèse du dernier relevé"></section>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--cold)"></span>Sous le seuil</span>
+    <span><span class="dot" style="background:var(--ok)"></span>Dans la plage</span>
+    <span><span class="dot" style="background:var(--hot)"></span>Au-dessus</span>
+    <span class="seuils">Plage de confort
+      <input type="number" step="0.5" id="smin" aria-label="Seuil bas"> à
+      <input type="number" step="0.5" id="smax" aria-label="Seuil haut"> °C</span>
+  </div>
+
+  <section class="card mapcard" aria-label="Plan des températures">
+    <div class="mapscroll"><div class="map"><img id="plan-img" alt="Plan de masse d'Eurexpo avec les températures relevées" width="1400" height="1107"><div id="pins"></div></div></div>
+  </section>
+
+  <section class="sectors" id="sectors" aria-label="Températures par secteur"></section>
+
+  <section class="card">
+    <div class="histhead"><h2>Historique de la journée</h2><span class="note" id="histnote"></span></div>
+    <div class="tablewrap" id="hist"></div>
+  </section>
+
+  <p class="note" id="status">Chargement des relevés…</p>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <form class="form" id="form" novalidate>
+    <h2>Nouveau relevé</h2>
+    <p class="note">Les valeurs du relevé précédent sont pré-remplies : ne modifiez que ce qui a changé. Virgule ou point acceptés.</p>
+    <div class="formrow">
+      <label><span class="label">Date et heure</span><input type="datetime-local" id="f-at" required></label>
+      <label><span class="label">Salon / événement</span><input type="text" id="f-salon" placeholder="ex. Equip'Hotel"></label>
+    </div>
+    <div class="formrow">
+      <label><span class="label">Saisi par</span><input type="text" id="f-auteur" placeholder="Nom du technicien"></label>
+      <label><span class="label">Code de saisie</span><input type="password" id="f-code" inputmode="numeric" autocomplete="off"></label>
+    </div>
+    <div id="f-points"></div>
+    <p class="err" id="f-err" hidden></p>
+    <div class="formbar">
+      <button type="button" class="btn" id="f-cancel">Annuler</button>
+      <button type="submit" class="btn primary" id="f-save">Enregistrer</button>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="overlay" id="shotbox" hidden>
+  <div class="form">
+    <h2>Image du plan</h2>
+    <p class="note">Sur téléphone : appui long sur l'image, puis « Partager » et WhatsApp (ou « Enregistrer l'image », puis joignez-la dans WhatsApp). Sur ordinateur : téléchargez l'image et glissez-la dans la discussion WhatsApp.</p>
+    <img id="shot-img" alt="Plan d'Eurexpo avec les températures du dernier relevé" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    <div class="formbar">
+      <a class="btn" id="shot-txt" href="https://wa.me/" target="_blank" rel="noopener" style="text-decoration:none">Envoyer le texte</a>
+      <a class="btn" id="shot-dl" download="temperatures-halls.png" style="text-decoration:none">Télécharger l'image</a>
+      <button type="button" class="btn primary" id="shot-close">Fermer</button>
+    </div>
+  </div>
+</div>
+
+
+<style>body{margin:0;font-size:15px}[hidden]{display:none!important}</style>
+<script>
+let POINTS=[],SECTORS=[],rounds=[],seuils={min:19,max:22},day=null,loaded=false;
+const $=id=>document.getElementById(id);
+const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return ""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+
+const API_URL="https://script.google.com/macros/s/AKfycbw-PNxvwdYDCxvpRmzgiUh4que52lMHozmW8P8io8clMQnGaVIFfGiT6rh6MshydGLPAQ/exec";
+function api(fn){
+  const args=Array.prototype.slice.call(arguments,1);
+  return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn,args}),redirect:"follow"})
+    .then(r=>{if(!r.ok)throw new Error("Serveur injoignable ("+r.status+")");return r.json()})
+    .catch(e=>{throw new Error(e instanceof TypeError?"Pas de connexion au serveur.":errMsg(e))})
+    .then(j=>{if(!j||!j.ok)throw new Error(j&&j.error||"Réponse illisible du serveur.");return j.data});
+}
+/* Plan : chargé une fois depuis le serveur puis gardé sur l'appareil */
+let planReady;
+function loadPlan(){
+  const img=$("plan-img"),show=b64=>new Promise(r=>{img.onload=r;img.onerror=r;img.src="data:image/jpeg;base64,"+b64});
+  const cached=store.get("planB64");
+  planReady=cached?show(cached):api("getPlan").then(b=>{store.set("planB64",b);return show(b)}).catch(()=>{});
+}
+function errMsg(e){return (e&&e.message?e.message:String(e||"")).replace(/^Error:\s*/,"")||"Erreur inconnue."}
+
+function apply(d){
+  POINTS=d.points.map(([id,label,sector,x,y,short])=>({id,label,sector,x,y,short}));
+  SECTORS=[];POINTS.forEach(p=>{let s=SECTORS.find(s=>s.name===p.sector);if(!s)SECTORS.push(s={name:p.sector,pts:[]});s.pts.push([p.id,p.label])});
+  rounds=d.rounds||[];seuils=d.seuils||seuils;loaded=true;$("status").textContent="";render();
+}
+function load(){api("getData").then(apply).catch(e=>{$("status").textContent="Relevés indisponibles : "+errMsg(e)})}
+
+const fmt=v=>v==null||isNaN(v)?"–":v.toLocaleString("fr-FR",{minimumFractionDigits:1,maximumFractionDigits:1});
+const dayKey=iso=>{const d=new Date(iso);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+const hhmm=iso=>new Date(iso).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+const dayLabel=k=>{const [y,m,d]=k.split("-").map(Number);return new Date(y,m-1,d).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})};
+const status=v=>v==null||isNaN(v)?"na":v<seuils.min?"froid":v>seuils.max?"chaud":"ok";
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function dayRounds(){return rounds.filter(r=>dayKey(r.at)===day).sort((a,b)=>a.at<b.at?-1:1)}
+
+function render(){
+  const keys=[...new Set(rounds.map(r=>dayKey(r.at)))].sort().reverse();
+  if(!day||!keys.includes(day)) day=keys[0]||null;
+  $("day").innerHTML=keys.length?keys.map(k=>`<option value="${k}"${k===day?" selected":""}>${dayLabel(k)}</option>`).join(""):`<option>Aucun relevé</option>`;
+  $("smin").value=seuils.min;$("smax").value=seuils.max;
+  const dr=dayRounds(),last=dr[dr.length-1],prev=dr[dr.length-2];
+  updateWa();
+  if(!last){
+    $("summary").innerHTML=`<div class="empty" style="flex:1">${loaded?"Aucun relevé enregistré pour l'instant. Utilisez « Nouveau relevé » pour saisir le premier.":"Chargement…"}</div>`;
+    $("sectors").innerHTML="";$("pins").innerHTML="";$("hist").innerHTML="";$("histnote").textContent="";
+    return;
+  }
+  $("sub").textContent=`Eurexpo Lyon${last.salon?" · "+last.salon:""} · dernier relevé ${hhmm(last.at)}${last.auteur?" par "+last.auteur:""}`;
+  const vals=POINTS.map(p=>last.values[p.id]).filter(v=>typeof v==="number");
+  const mn=Math.min(...vals),mx=Math.max(...vals),avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const pmin=POINTS.find(p=>last.values[p.id]===mn),pmax=POINTS.find(p=>last.values[p.id]===mx);
+  const nCold=vals.filter(v=>v<seuils.min).length,nHot=vals.filter(v=>v>seuils.max).length;
+  $("summary").innerHTML=`
+    <div><div class="label">Relevé de</div><div class="v num">${hhmm(last.at)} <small>${dr.length} relevé${dr.length>1?"s":""} ce jour</small></div></div>
+    <div><div class="label">Moyenne</div><div class="v num">${fmt(avg)} <small>°C · ${vals.length} points</small></div></div>
+    <div><div class="label">Plus froid</div><div class="v num" style="color:var(--cold)">${fmt(mn)} <small>${esc(pmin?.label)}</small></div></div>
+    <div><div class="label">Plus chaud</div><div class="v num" style="color:var(--hot)">${fmt(mx)} <small>${esc(pmax?.label)}</small></div></div>
+    <div><div class="label">Hors plage</div><div class="v num">${nCold+nHot} <small>${nCold} froid · ${nHot} chaud</small></div></div>
+    <div><div class="label">Extérieur Bron</div><div class="v num">${last.ext!=null?fmt(last.ext)+" <small>°C</small>":"–"} <small>DJU veille ${last.dju!=null?fmt(last.dju):"–"}</small></div></div>`;
+  $("pins").innerHTML=POINTS.map(p=>{const v=last.values[p.id];
+    return `<div class="pin ${status(v)}" style="left:${p.x}%;top:${p.y}%" title="${esc(p.label)} : ${fmt(v)} °C">${fmt(v)}<small>${esc(p.short)}</small></div>`}).join("");
+  $("sectors").innerHTML=SECTORS.map(s=>`<div class="sector"><h2>${s.name}</h2><div class="tiles">${s.pts.map(([id,label])=>{
+    const v=last.values[id],pv=prev?.values?.[id],st=status(v);
+    const d=(typeof v==="number"&&typeof pv==="number")?v-pv:null;
+    const dTxt=d==null?"":Math.abs(d)<0.05?"= stable":(d>0?"▲ +":"▼ −")+fmt(Math.abs(d));
+    return `<div class="tile ${st}"><div class="name">${esc(label)}</div><div class="t num">${fmt(v)}</div>
+      <div class="meta">${spark(dr.map(r=>r.values[id]))}</div><div class="delta num">${dTxt}</div></div>`}).join("")}</div></div>`).join("");
+  $("histnote").textContent=prev?`Variation affichée sur les tuiles : par rapport au relevé de ${hhmm(prev.at)}`:"";
+  $("hist").innerHTML=`<table><thead><tr><th>Point de mesure</th>${dr.map(r=>`<th class="num">${hhmm(r.at)}<br><button class="del" data-del="${esc(r._id)}">supprimer</button></th>`).join("")}</tr></thead>
+    <tbody>${POINTS.map(p=>`<tr><td>${esc(p.label)}</td>${dr.map(r=>{const v=r.values[p.id];return `<td class="num ${status(v)}">${fmt(v)}</td>`}).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function spark(series){
+  const pts=series.map((v,i)=>[i,v]).filter(([,v])=>typeof v==="number");
+  if(pts.length<2) return `<span>${pts.length?"1 mesure ce jour":""}</span>`;
+  const W=90,H=22,lo=Math.min(seuils.min,...pts.map(p=>p[1]))-0.3,hi=Math.max(seuils.max,...pts.map(p=>p[1]))+0.3,n=series.length-1;
+  const x=i=>2+i/n*(W-4),y=v=>H-2-(v-lo)/(hi-lo)*(H-4);
+  const line=pts.map(([i,v])=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const [li,lv]=pts[pts.length-1];
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">
+    <rect x="0" y="${y(seuils.max).toFixed(1)}" width="${W}" height="${(y(seuils.min)-y(seuils.max)).toFixed(1)}" fill="var(--line)" opacity=".5"/>
+    <polyline points="${line}" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+    <circle cx="${x(li).toFixed(1)}" cy="${y(lv).toFixed(1)}" r="2.6" fill="var(--ink)"/></svg>`;
+}
+
+function summaryText(){
+  const dr=dayRounds(),last=dr[dr.length-1];if(!last)return null;
+  const d=new Date(last.at).toLocaleDateString("fr-FR");
+  const lines=[`Températures halls Eurexpo – ${d} ${hhmm(last.at)}${last.salon?" – "+last.salon:""}`,`Plage de confort : ${fmt(seuils.min)} à ${fmt(seuils.max)} °C`];
+  if(last.ext!=null||last.dju!=null)lines.push(`Extérieur Bron : ${fmt(last.ext)} °C · DJU veille : ${fmt(last.dju)}`);
+  lines.push("");
+  const out=POINTS.filter(p=>["froid","chaud"].includes(status(last.values[p.id])));
+  if(out.length){lines.push("Hors plage :");out.forEach(p=>lines.push(`  ${p.label} : ${fmt(last.values[p.id])} °C (${status(last.values[p.id])})`));lines.push("")}
+  SECTORS.forEach(s=>lines.push(s.name+" : "+s.pts.map(([id,l])=>`${l.replace(/^Hall /,"")} ${fmt(last.values[id])}`).join(" · ")));
+  return lines.join("\n");
+}
+function updateWa(){}
+
+/* Image du plan avec les températures, pour WhatsApp */
+const PIN_COL={froid:"#2463ad",ok:"#237350",chaud:"#c0491a",na:"#6b7785"};
+function rrect(g,x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath()}
+async function planImage(){
+  const dr=dayRounds(),last=dr[dr.length-1];if(!last)return null;
+  try{await document.fonts.ready}catch(e){}
+  const img=document.querySelector(".map img");
+  await planReady;if(!img.naturalWidth)return null;
+  const W=img.naturalWidth,H=img.naturalHeight,TOP=118,BOT=64;
+  const c=document.createElement("canvas");c.width=W;c.height=H+TOP+BOT;
+  const g=c.getContext("2d"),NUM="Barlow Semi Condensed, Arial, sans-serif",TXT="Barlow, Arial, sans-serif";
+  g.fillStyle="#ffffff";g.fillRect(0,0,c.width,c.height);
+  g.drawImage(img,0,TOP,W,H);
+  g.fillStyle="#18212b";g.font="700 42px "+NUM;g.textAlign="left";g.textBaseline="alphabetic";
+  g.fillText("Températures des halls – Eurexpo",28,56);
+  const dt=new Date(last.at).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});
+  g.fillStyle="#5d6b78";g.font="500 26px "+TXT;
+  g.fillText(`${dt} à ${hhmm(last.at)}${last.salon?" · "+last.salon:""}${last.auteur?" · relevé par "+last.auteur:""}${last.ext!=null?" · Ext. Bron "+fmt(last.ext)+" °C":""}${last.dju!=null?" · DJU veille "+fmt(last.dju):""}`,28,96);
+  g.strokeStyle="#d5dce3";g.lineWidth=2;g.beginPath();g.moveTo(0,TOP-1);g.lineTo(W,TOP-1);g.stroke();
+  g.textAlign="center";
+  POINTS.forEach(p=>{
+    const v=last.values[p.id],x=p.x/100*W,y=TOP+p.y/100*H,t1=fmt(v),t2=p.short||"";
+    g.font="700 27px "+NUM;const w1=g.measureText(t1).width;
+    g.font="600 13px "+TXT;const w2=g.measureText(t2).width;
+    const w=Math.max(w1,w2)+18,h=46;
+    g.shadowColor="rgba(0,0,0,.28)";g.shadowBlur=4;g.shadowOffsetY=1;
+    rrect(g,x-w/2,y-h/2,w,h,8);g.fillStyle=PIN_COL[status(v)];g.fill();
+    g.shadowColor="transparent";g.shadowBlur=0;g.shadowOffsetY=0;
+    g.fillStyle="#ffffff";g.font="700 27px "+NUM;g.fillText(t1,x,y+5);
+    g.font="600 13px "+TXT;g.fillText(t2,x,y+19);
+  });
+  const vals=POINTS.map(p=>last.values[p.id]).filter(v=>typeof v==="number");
+  const nC=vals.filter(v=>v<seuils.min).length,nH=vals.filter(v=>v>seuils.max).length;
+  const fy=TOP+H+40;g.textAlign="left";let fx=28;
+  [["froid",`Sous ${fmt(seuils.min)} °C (${nC})`],["ok",`Entre ${fmt(seuils.min)} et ${fmt(seuils.max)} °C`],["chaud",`Au-dessus de ${fmt(seuils.max)} °C (${nH})`]].forEach(([k,l])=>{
+    g.fillStyle=PIN_COL[k];rrect(g,fx,fy-20,26,26,5);g.fill();
+    g.fillStyle="#18212b";g.font="500 24px "+TXT;g.fillText(l,fx+36,fy);fx+=36+g.measureText(l).width+40});
+  return c;
+}
+$("wa").onclick=async()=>{
+  const c=await planImage();if(!c)return toast("Aucun relevé à envoyer");
+  const blob=await new Promise(r=>c.toBlob(r,"image/png"));
+  try{
+    const file=new File([blob],"temperatures-halls.png",{type:"image/png"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:"Températures des halls"});return}
+  }catch(e){if(e&&e.name==="AbortError")return}
+  const url=c.toDataURL("image/png");
+  $("shot-img").src=url;$("shot-dl").href=url;
+  const t=summaryText();$("shot-txt").href="https:\/\/wa.me/"+(t?"?text="+encodeURIComponent(t):"");
+  $("shotbox").hidden=false;
+};
+$("shot-close").onclick=()=>$("shotbox").hidden=true;
+$("shotbox").onclick=e=>{if(e.target.id==="shotbox")$("shotbox").hidden=true};
+$("copy").onclick=async()=>{
+  const txt=summaryText();if(!txt)return toast("Aucun relevé à copier");
+  try{await navigator.clipboard.writeText(txt);toast("Résumé copié")}
+  catch(e){const ta=document.createElement("textarea");ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("Résumé copié")}catch(e2){toast("Copie impossible")};ta.remove()}
+};
+
+let tt;function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2600)}
+$("day").onchange=e=>{day=e.target.value;render()};
+
+function needCode(){const c=store.get("codeSaisie");if(!c)toast("Saisissez d'abord votre code dans « Nouveau relevé »");return c}
+async function saveSeuils(){
+  const mn=parseFloat($("smin").value),mx=parseFloat($("smax").value);
+  if(isNaN(mn)||isNaN(mx)||mn>=mx){$("smin").value=seuils.min;$("smax").value=seuils.max;return toast("Le seuil bas doit être inférieur au seuil haut")}
+  if(mn===seuils.min&&mx===seuils.max)return;
+  const code=needCode();if(!code){$("smin").value=seuils.min;$("smax").value=seuils.max;return}
+  try{apply(await api("saveSeuils",mn,mx,code));toast("Plage enregistrée")}
+  catch(e){$("smin").value=seuils.min;$("smax").value=seuils.max;toast(errMsg(e))}
+}
+$("smin").onchange=saveSeuils;$("smax").onchange=saveSeuils;
+
+function localNow(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)}
+$("new").onclick=()=>{
+  if(!loaded)return toast("Patientez, chargement en cours");
+  const lastAll=[...rounds].sort((a,b)=>a.at<b.at?1:-1)[0];
+  $("f-at").value=localNow();$("f-salon").value=lastAll?.salon||"";$("f-err").hidden=true;
+  $("f-auteur").value=store.get("auteur");$("f-code").value=store.get("codeSaisie");
+  $("f-points").innerHTML=SECTORS.map(s=>`<div class="fgroup"><h3>${s.name}</h3>${s.pts.map(([id,l])=>`<label class="fpoint"><span>${esc(l)}</span><input type="text" inputmode="decimal" id="f-${id}" value="${lastAll?.values?.[id]!=null?fmt(lastAll.values[id]):""}"></label>`).join("")}</div>`).join("");
+  $("overlay").hidden=false;
+};
+$("f-cancel").onclick=()=>$("overlay").hidden=true;
+$("overlay").onclick=e=>{if(e.target.id==="overlay")$("overlay").hidden=true};
+$("form").onsubmit=async e=>{
+  e.preventDefault();
+  const values={},bad=[];
+  POINTS.forEach(p=>{const el=$("f-"+p.id),raw=el.value.trim().replace(",",".");el.classList.remove("bad");
+    if(raw==="")return;const v=Number(raw);if(isNaN(v)||v<-10||v>45){bad.push(p.label);el.classList.add("bad")}else values[p.id]=Math.round(v*10)/10});
+  const at=$("f-at").value,code=$("f-code").value.trim(),err=m=>{$("f-err").textContent=m;$("f-err").hidden=false};
+  if(!at)return err("Indiquez la date et l'heure du relevé.");
+  if(!code)return err("Saisissez le code de saisie communiqué par Eurexpo.");
+  if(bad.length)return err("Valeur à corriger : "+bad.join(", ")+" (nombre entre -10 et 45).");
+  if(!Object.keys(values).length)return err("Saisissez au moins une température.");
+  $("f-save").disabled=true;$("f-save").textContent="Enregistrement…";
+  let data=null;const iso=new Date(at).toISOString();
+  try{data=await api("saveRound",{at:iso,salon:$("f-salon").value.trim(),auteur:$("f-auteur").value.trim(),values},code)}
+  catch(ex){err("Relevé non enregistré : "+errMsg(ex))}
+  if(data){
+    store.set("codeSaisie",code);store.set("auteur",$("f-auteur").value.trim());
+    $("overlay").hidden=true;toast("Relevé enregistré");
+    try{day=dayKey(iso);apply(data)}catch(ex){$("status").textContent="Relevé enregistré, mais l'affichage a échoué ("+errMsg(ex)+"). Rechargez la page."}
+  }
+  $("f-save").disabled=false;$("f-save").textContent="Enregistrer";
+};
+
+let pendingDel=null;
+$("hist").onclick=async e=>{
+  const b=e.target.closest("[data-del]");if(!b)return;
+  if(pendingDel!==b.dataset.del){pendingDel=b.dataset.del;b.textContent="confirmer ?";return}
+  pendingDel=null;const code=needCode();if(!code)return render();
+  try{apply(await api("deleteRound",b.dataset.del,code));toast("Relevé supprimé")}catch(ex){toast(errMsg(ex));render()}
+};
+
+render();loadPlan();load();
+if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+setInterval(()=>{if($("overlay").hidden&&!document.hidden)load()},60000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
+</script>
+</body>
+</html>
