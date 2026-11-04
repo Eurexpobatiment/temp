@@ -131,6 +131,7 @@ td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weigh
       <select id="day" aria-label="Journée affichée"></select>
       <button class="btn" id="copy">Copier le résumé</button>
       <button class="btn" id="wa">Envoyer le plan sur WhatsApp</button>
+      <button class="btn" id="xls">Extraction Excel</button>
       <button class="btn primary" id="new">Nouveau relevé</button>
     </div>
   </header>
@@ -195,6 +196,19 @@ td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weigh
   </div>
 </div>
 
+<div class="overlay" id="xbox" hidden>
+  <div class="form">
+    <h2>Extraction Excel</h2>
+    <label style="display:grid;gap:4px"><span class="label">Salon / événement</span><select id="x-salon"></select></label>
+    <p class="note" id="x-info"></p>
+    <p class="note">Le fichier contient un onglet « Relevés » (une ligne par relevé, une colonne par point de mesure) et un onglet « Par point » (moyenne, mini, maxi et nombre de relevés hors plage pour chaque point).</p>
+    <p class="err" id="x-err" hidden></p>
+    <div class="formbar">
+      <button type="button" class="btn" id="x-cancel">Annuler</button>
+      <button type="button" class="btn primary" id="x-go">Enregistrer le fichier Excel</button>
+    </div>
+  </div>
+</div>
 
 <style>body{margin:0;font-size:15px}[hidden]{display:none!important}</style>
 <script>
@@ -354,6 +368,113 @@ $("copy").onclick=async()=>{
   const txt=summaryText();if(!txt)return toast("Aucun relevé à copier");
   try{await navigator.clipboard.writeText(txt);toast("Résumé copié")}
   catch(e){const ta=document.createElement("textarea");ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("Résumé copié")}catch(e2){toast("Copie impossible")};ta.remove()}
+};
+
+/* Extraction Excel par salon : fichier .xlsx fabriqué dans le navigateur à partir des relevés déjà chargés (aucun service extérieur) */
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+const crc32=b=>{let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0};
+function zip(files){ /* archive ZIP sans compression */
+  const enc=new TextEncoder(),parts=[],cd=[];let off=0;
+  const u16=v=>[v&255,(v>>>8)&255],u32=v=>[v&255,(v>>>8)&255,(v>>>16)&255,(v>>>24)&255];
+  files.forEach(([name,txt])=>{const n=enc.encode(name),d=enc.encode(txt),c=crc32(d);
+    const common=[...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(c),...u32(d.length),...u32(d.length),...u16(n.length),...u16(0)];
+    const lh=new Uint8Array([...u32(0x04034b50),...common]);parts.push(lh,n,d);
+    cd.push(new Uint8Array([...u32(0x02014b50),...u16(20),...common,...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),n);
+    off+=lh.length+n.length+d.length});
+  const cdLen=cd.reduce((a,b)=>a+b.length,0);
+  return new Blob([...parts,...cd,new Uint8Array([...u32(0x06054b50),0,0,0,0,...u16(files.length),...u16(files.length),...u32(cdLen),...u32(off),0,0])],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+const xe=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"");
+const colName=i=>{let s="";i++;while(i){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=(i-m-1)/26}return s};
+/* cellule : null | texte | nombre | {v, s} ; styles : 1 date-heure, 2 nombre 0,0, 3 en-tête gras, 4 titre */
+function sheetXml(sh){
+  const rows=sh.rows.map((r,ri)=>`<row r="${ri+1}">${r.map((c,ci)=>{
+    if(c==null||c==="")return "";const o=typeof c==="object"?c:{v:c},ref=colName(ci)+(ri+1),s=o.s?` s="${o.s}"`:"";
+    return typeof o.v==="number"&&isFinite(o.v)?`<c r="${ref}"${s}><v>${o.v}</v></c>`:`<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xe(o.v)}</t></is></c>`}).join("")}</row>`).join("");
+  const fr=sh.headRow+1,last=colName(sh.rows[sh.headRow].length-1);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`+
+    `<sheetViews><sheetView workbookViewId="0"><pane xSplit="${sh.freezeCols}" ySplit="${fr}" topLeftCell="${colName(sh.freezeCols)}${fr+1}" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>`+
+    `<cols>${sh.cols.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")}</cols><sheetData>${rows}</sheetData>`+
+    (sh.rows.length>fr?`<autoFilter ref="A${fr}:${last}${sh.rows.length}"/>`:"")+`</worksheet>`;
+}
+function xlsxBlob(sheets){
+  const wbx=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s,i)=>`<sheet name="${xe(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets>${(dn=>dn?`<definedNames>${dn}</definedNames>`:"")(sheets.map((s,i)=>s.rows.length>s.headRow+1?`<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xe(s.name)}'!$A$${s.headRow+1}:$${colName(s.rows[s.headRow].length-1)}$${s.rows.length}</definedName>`:"").join(""))}</workbook>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="dd/mm/yyyy hh:mm"/><numFmt numFmtId="165" formatCode="0.0"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F0"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  return zip([
+    ["[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+    ["_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ["xl/workbook.xml",wbx],
+    ["xl/_rels/workbook.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+    ["xl/styles.xml",styles],
+    ...sheets.map((s,i)=>[`xl/worksheets/sheet${i+1}.xml`,sheetXml(s)])
+  ]);
+}
+const salonKey=s=>String(s||"").trim().replace(/\s+/g," ").toLowerCase();
+function salonGroups(){
+  const m=new Map();
+  rounds.forEach(r=>{const k=salonKey(r.salon);let g=m.get(k);if(!g)m.set(k,g={key:k,names:{},list:[]});g.list.push(r);const n=String(r.salon||"").trim();if(n)g.names[n]=(g.names[n]||0)+1});
+  return [...m.values()].map(g=>{g.list.sort((a,b)=>a.at<b.at?-1:1);
+    g.name=Object.keys(g.names).sort((a,b)=>g.names[b]-g.names[a])[0]||"(salon non renseigné)";
+    g.first=g.list[0].at;g.last=g.list[g.list.length-1].at;return g}).sort((a,b)=>a.last<b.last?1:-1);
+}
+const dShort=iso=>new Date(iso).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});
+const periode=g=>dayKey(g.first)===dayKey(g.last)?"le "+dShort(g.first):"du "+dShort(g.first)+" au "+dShort(g.last);
+let xGroups=[];
+function xInfo(){const v=$("x-salon").value,g=v==="*"?null:xGroups.find(g=>g.key===v);
+  const n=g?g.list.length:rounds.length;
+  $("x-info").textContent=g?`${n} relevé${n>1?"s":""} ${periode(g)}.`:`${n} relevé${n>1?"s":""} au total, tous salons confondus.`}
+$("xls").onclick=()=>{
+  if(!loaded)return toast("Patientez, chargement en cours");
+  if(!rounds.length)return toast("Aucun relevé à extraire");
+  xGroups=salonGroups();
+  const cur=salonKey(dayRounds().slice(-1)[0]?.salon);
+  $("x-salon").innerHTML=xGroups.map(g=>`<option value="${esc(g.key)}"${g.key===cur?" selected":""}>${esc(g.name)} – ${periode(g)}</option>`).join("")+`<option value="*">Tous les salons</option>`;
+  $("x-err").hidden=true;xInfo();$("xbox").hidden=false;
+};
+$("x-salon").onchange=xInfo;
+$("x-cancel").onclick=()=>$("xbox").hidden=true;
+$("xbox").onclick=e=>{if(e.target.id==="xbox")$("xbox").hidden=true};
+function buildWorkbook(list,titre,per){
+  const serial=iso=>{const d=new Date(iso);return (d.getTime()-d.getTimezoneOffset()*60000)/86400000+25569};
+  const num=v=>typeof v==="number"&&!isNaN(v)?v:null,dec=v=>v==null?null:{v,s:2},H=v=>({v,s:3});
+  const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length*10)/10:null;
+  const sous=`Sous ${fmt(seuils.min)} °C`,dessus=`Au-dessus de ${fmt(seuils.max)} °C`;
+  const sub=`Relevés ${per} · plage de confort ${fmt(seuils.min)} à ${fmt(seuils.max)} °C`;
+  const salonName={};salonGroups().forEach(g=>{if(g.key)salonName[g.key]=g.name});
+  const head=["Date et heure","Salon","Saisi par","Ext. Bron (°C)","DJU veille",...POINTS.map(p=>p.label),"Moyenne","Mini","Maxi",sous,dessus];
+  const r1=[[{v:`Températures des halls – Eurexpo · ${titre}`,s:4}],[sub],[],head.map(H)];
+  list.forEach(r=>{const vals=POINTS.map(p=>num(r.values[p.id])),ok=vals.filter(v=>v!=null);
+    r1.push([{v:serial(r.at),s:1},salonName[salonKey(r.salon)]||"",r.auteur||"",dec(num(r.ext)),dec(num(r.dju)),...vals.map(dec),
+      dec(avg(ok)),dec(ok.length?Math.min(...ok):null),dec(ok.length?Math.max(...ok):null),ok.filter(v=>v<seuils.min).length,ok.filter(v=>v>seuils.max).length])});
+  const r2=[[{v:`Synthèse par point – ${titre}`,s:4}],[sub],[],["Secteur","Point de mesure","Nb mesures","Moyenne","Mini","Maxi",sous,dessus,"Dernière valeur"].map(H)];
+  POINTS.forEach(p=>{const s=list.map(r=>num(r.values[p.id])).filter(v=>v!=null);
+    r2.push([p.sector,p.label,s.length,dec(avg(s)),dec(s.length?Math.min(...s):null),dec(s.length?Math.max(...s):null),
+      s.filter(v=>v<seuils.min).length,s.filter(v=>v>seuils.max).length,dec(s.length?s[s.length-1]:null)])});
+  return xlsxBlob([
+    {name:"Relevés",rows:r1,headRow:3,freezeCols:1,cols:head.map((h,i)=>i===0?17:i<3?18:Math.max(9,Math.min(16,h.length+2)))},
+    {name:"Par point",rows:r2,headRow:3,freezeCols:2,cols:[16,26,11,10,8,8,12,16,14]}]);
+}
+$("x-go").onclick=async()=>{
+  const v=$("x-salon").value,g=v==="*"?null:xGroups.find(g=>g.key===v);
+  const list=g?g.list:[...rounds].sort((a,b)=>a.at<b.at?-1:1),titre=g?g.name:"Tous les salons";
+  if(!list.length)return;
+  const per=periode(g||{first:list[0].at,last:list[list.length-1].at});
+  const slug=titre.normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9]+/g,"_").replace(/^_|_$/g,"")||"salon";
+  const fname=`Temperatures_halls_${slug}_${dayKey(list[0].at)}.xlsx`;
+  $("x-err").hidden=true;
+  let blob;
+  try{blob=buildWorkbook(list,titre,per)}catch(e){$("x-err").textContent="Fichier non créé : "+errMsg(e);$("x-err").hidden=false;return}
+  /* Ordinateur (Chrome, Edge) : fenêtre « Enregistrer sous » pour choisir le dossier ; sinon téléchargement du navigateur */
+  if(window.showSaveFilePicker){
+    try{
+      const h=await showSaveFilePicker({suggestedName:fname,types:[{description:"Classeur Excel",accept:{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"]}}]});
+      const w=await h.createWritable();await w.write(blob);await w.close();
+      $("xbox").hidden=true;return toast("Fichier enregistré : "+h.name);
+    }catch(e){if(e&&e.name==="AbortError")return;}
+  }
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+  $("xbox").hidden=true;toast("Fichier Excel téléchargé");
 };
 
 let tt;function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2600)}
