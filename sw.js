@@ -1,5 +1,5 @@
 /* Service worker : garde l'écran de l'appli sur l'appareil. Les relevés passent toujours par le serveur. */
-const CACHE = "temperatures-v1";
+const CACHE = "temperatures-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {

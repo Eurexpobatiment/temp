@@ -12,6 +12,9 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Températures halls Eurexpo</title>
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
 <style>
 /* Layout : bandeau de synthèse, puis tuiles par secteur (comme on lit le plan), puis historique du jour en tableau */
@@ -158,6 +161,7 @@ td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weigh
     <div class="tablewrap" id="hist"></div>
   </section>
 
+  <p class="note" id="pendnote" style="color:var(--hot)"></p>
   <p class="note" id="status">Chargement des relevés…</p>
 </div>
 
@@ -217,12 +221,30 @@ const $=id=>document.getElementById(id);
 const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return ""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 
 const API_URL="https://script.google.com/macros/s/AKfycbw-PNxvwdYDCxvpRmzgiUh4que52lMHozmW8P8io8clMQnGaVIFfGiT6rh6MshydGLPAQ/exec";
-function api(fn){
-  const args=Array.prototype.slice.call(arguments,1);
-  return fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn,args}),redirect:"follow"})
-    .then(r=>{if(!r.ok)throw new Error("Serveur injoignable ("+r.status+")");return r.json()})
-    .catch(e=>{throw new Error(e instanceof TypeError?"Pas de connexion au serveur.":errMsg(e))})
-    .then(j=>{if(!j||!j.ok)throw new Error(j&&j.error||"Réponse illisible du serveur.");return j.data});
+/* Appels au serveur : délai maximum, et nouveaux essais automatiques pour les lectures.
+   Une erreur « réseau » (e.net) veut dire que le serveur n'a pas pu répondre : on peut réessayer plus tard.
+   Les autres erreurs viennent du serveur (code faux, valeur refusée) : inutile de réessayer. */
+const READ_FNS={getData:1,getPlan:1};
+function netErr(m){const e=new Error(m);e.net=true;return e}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function apiOnce(fn,args){
+  const ctl=typeof AbortController!=="undefined"?new AbortController():null;
+  const t=ctl&&setTimeout(()=>ctl.abort(),30000);
+  let r;
+  try{r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn,args}),redirect:"follow",signal:ctl&&ctl.signal})}
+  catch(e){throw netErr(e&&e.name==="AbortError"?"Le serveur met trop de temps à répondre.":"Pas de connexion au serveur.")}
+  finally{if(t)clearTimeout(t)}
+  if(!r.ok){if(r.status>=500||r.status===429)throw netErr("Serveur momentanément indisponible ("+r.status+").");throw new Error("Serveur injoignable ("+r.status+").")}
+  let j;try{j=await r.json()}catch(e){throw netErr("Réponse illisible du serveur.")}
+  if(!j||!j.ok)throw new Error(j&&j.error||"Réponse illisible du serveur.");
+  return j.data;
+}
+async function api(fn,...args){
+  const tries=READ_FNS[fn]?3:1;
+  for(let i=0;;i++){
+    try{return await apiOnce(fn,args)}
+    catch(e){if(!e.net||i>=tries-1)throw e;await wait(1500*(i+1))}
+  }
 }
 /* Plan : chargé une fois depuis le serveur puis gardé sur l'appareil */
 let planReady;
@@ -233,12 +255,52 @@ function loadPlan(){
 }
 function errMsg(e){return (e&&e.message?e.message:String(e||"")).replace(/^Error:\s*/,"")||"Erreur inconnue."}
 
-function apply(d){
+/* Relevés en attente d'envoi (saisis sans réseau) : gardés sur l'appareil jusqu'à leur envoi */
+const pending={
+  list(){try{return JSON.parse(store.get("pendingRounds")||"[]")}catch(e){return []}},
+  save(l){store.set("pendingRounds",JSON.stringify(l))},
+  add(p){const l=this.list();l.push(p);this.save(l)},
+  remove(cid){this.save(this.list().filter(p=>p.round.cid!==cid))},
+  mark(cid,err){const l=this.list();l.forEach(p=>{if(p.round.cid===cid)p.err=err});this.save(l)}
+};
+const newCid=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
+
+let lastData=null,cacheAt=null;
+/* src : "server" (réponse fraîche), "cache" (copie gardée sur l'appareil), "local" (simple réaffichage) */
+function apply(d,src="server"){
+  lastData=d;
   POINTS=d.points.map(([id,label,sector,x,y,short])=>({id,label,sector,x,y,short}));
   SECTORS=[];POINTS.forEach(p=>{let s=SECTORS.find(s=>s.name===p.sector);if(!s)SECTORS.push(s={name:p.sector,pts:[]});s.pts.push([p.id,p.label])});
-  rounds=d.rounds||[];seuils=d.seuils||seuils;loaded=true;$("status").textContent="";render();
+  const pend=pending.list().map(p=>({...p.round,_id:"p:"+p.round.cid,_pending:true,_err:p.err}));
+  rounds=(d.rounds||[]).concat(pend);seuils=d.seuils||seuils;loaded=true;
+  if(src==="server"){cacheAt=new Date();$("status").textContent="";store.set("dataCache",JSON.stringify({at:cacheAt.toISOString(),d}))}
+  render();pendNote();
 }
-function load(){api("getData").then(apply).catch(e=>{$("status").textContent="Relevés indisponibles : "+errMsg(e)})}
+function pendNote(){
+  const l=pending.list(),ko=l.filter(p=>p.err);
+  $("pendnote").textContent=!l.length?"":
+    (l.length-ko.length?`${l.length-ko.length} relevé${l.length-ko.length>1?"s":""} en attente d'envoi (⏳), envoi automatique dès que le réseau revient. `:"")+
+    (ko.length?`${ko.length} relevé${ko.length>1?"s":""} refusé${ko.length>1?"s":""} par le serveur : ${ko[0].err} Supprimez-le et ressaisissez-le.`:"");
+}
+let loading=null;
+function load(){
+  if(loading)return loading;
+  loading=api("getData").then(d=>apply(d)).catch(e=>{
+    $("status").textContent=cacheAt?`Hors connexion : affichage des relevés connus au ${cacheAt.toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}. (${errMsg(e)})`:"Relevés indisponibles : "+errMsg(e);
+  }).finally(()=>{loading=null});
+  return loading;
+}
+/* Envoi des relevés en attente, dans l'ordre */
+let flushing=false;
+async function flush(){
+  if(flushing)return;const l=pending.list().filter(p=>!p.err);if(!l.length)return;flushing=true;
+  try{
+    for(const p of l){
+      try{const d=await api("saveRound",p.round,p.code);pending.remove(p.round.cid);apply(d);toast("Relevé en attente envoyé")}
+      catch(e){if(e.net)break;pending.mark(p.round.cid,errMsg(e));if(lastData)apply(lastData,"local")}
+    }
+  }finally{flushing=false;pendNote()}
+}
 
 const fmt=v=>v==null||isNaN(v)?"–":v.toLocaleString("fr-FR",{minimumFractionDigits:1,maximumFractionDigits:1});
 const dayKey=iso=>{const d=new Date(iso);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
@@ -281,7 +343,7 @@ function render(){
     return `<div class="tile ${st}"><div class="name">${esc(label)}</div><div class="t num">${fmt(v)}</div>
       <div class="meta">${spark(dr.map(r=>r.values[id]))}</div><div class="delta num">${dTxt}</div></div>`}).join("")}</div></div>`).join("");
   $("histnote").textContent=prev?`Variation affichée sur les tuiles : par rapport au relevé de ${hhmm(prev.at)}`:"";
-  $("hist").innerHTML=`<table><thead><tr><th>Point de mesure</th>${dr.map(r=>`<th class="num">${hhmm(r.at)}<br><button class="del" data-del="${esc(r._id)}">supprimer</button></th>`).join("")}</tr></thead>
+  $("hist").innerHTML=`<table><thead><tr><th>Point de mesure</th>${dr.map(r=>`<th class="num"${r._pending?` title="${r._err?"Refusé par le serveur : "+esc(r._err):"En attente d'envoi"}"`:""}>${hhmm(r.at)}${r._pending?(r._err?" ⚠":" ⏳"):""}<br><button class="del" data-del="${esc(r._id)}">supprimer</button></th>`).join("")}</tr></thead>
     <tbody>${POINTS.map(p=>`<tr><td>${esc(p.label)}</td>${dr.map(r=>{const v=r.values[p.id];return `<td class="num ${status(v)}">${fmt(v)}</td>`}).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
@@ -514,8 +576,15 @@ $("form").onsubmit=async e=>{
   if(!Object.keys(values).length)return err("Saisissez au moins une température.");
   $("f-save").disabled=true;$("f-save").textContent="Enregistrement…";
   let data=null;const iso=new Date(at).toISOString();
-  try{data=await api("saveRound",{at:iso,salon:$("f-salon").value.trim(),auteur:$("f-auteur").value.trim(),values},code)}
-  catch(ex){err("Relevé non enregistré : "+errMsg(ex))}
+  const round={at:iso,salon:$("f-salon").value.trim(),auteur:$("f-auteur").value.trim(),values,cid:newCid()};
+  try{data=await api("saveRound",round,code)}
+  catch(ex){
+    if(ex.net){ /* pas de réseau : le relevé est gardé sur l'appareil et partira tout seul */
+      pending.add({round,code});store.set("codeSaisie",code);store.set("auteur",round.auteur);
+      $("overlay").hidden=true;day=dayKey(iso);if(lastData)apply(lastData,"local");
+      toast("Pas de réseau : relevé gardé sur l'appareil, envoi automatique");
+    }else err("Relevé non enregistré : "+errMsg(ex));
+  }
   if(data){
     store.set("codeSaisie",code);store.set("auteur",$("f-auteur").value.trim());
     $("overlay").hidden=true;toast("Relevé enregistré");
@@ -528,14 +597,20 @@ let pendingDel=null;
 $("hist").onclick=async e=>{
   const b=e.target.closest("[data-del]");if(!b)return;
   if(pendingDel!==b.dataset.del){pendingDel=b.dataset.del;b.textContent="confirmer ?";return}
-  pendingDel=null;const code=needCode();if(!code)return render();
+  pendingDel=null;
+  if(b.dataset.del.startsWith("p:")){pending.remove(b.dataset.del.slice(2));if(lastData)apply(lastData,"local");return toast("Relevé en attente supprimé")}
+  const code=needCode();if(!code)return render();
   try{apply(await api("deleteRound",b.dataset.del,code));toast("Relevé supprimé")}catch(ex){toast(errMsg(ex));render()}
 };
 
-render();loadPlan();load();
+render();
+/* Affichage immédiat de la dernière copie gardée sur l'appareil, en attendant le serveur */
+try{const c=JSON.parse(store.get("dataCache")||"null");if(c&&c.d&&c.d.points){apply(c.d,"cache");cacheAt=new Date(c.at);$("status").textContent="Mise à jour des relevés…"}}catch(e){}
+loadPlan();load().then(flush);
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
-setInterval(()=>{if($("overlay").hidden&&!document.hidden)load()},60000);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
+setInterval(()=>{if($("overlay").hidden&&!document.hidden)flush().then(load)},60000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)flush().then(load)});
+window.addEventListener("online",()=>flush().then(load));
 </script>
 </body>
 </html>
