@@ -12,6 +12,8 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Températures halls Eurexpo</title>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://script.google.com">
 <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -215,92 +217,107 @@ td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weigh
 </div>
 
 <style>body{margin:0;font-size:15px}[hidden]{display:none!important}</style>
-<script>
+<script type="module">
 let POINTS=[],SECTORS=[],rounds=[],seuils={min:19,max:22},day=null,loaded=false;
 const $=id=>document.getElementById(id);
 const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return ""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
-
-const API_URL="https://script.google.com/macros/s/AKfycbw-PNxvwdYDCxvpRmzgiUh4que52lMHozmW8P8io8clMQnGaVIFfGiT6rh6MshydGLPAQ/exec";
-/* Appels au serveur : délai maximum, et nouveaux essais automatiques pour les lectures.
-   Une erreur « réseau » (e.net) veut dire que le serveur n'a pas pu répondre : on peut réessayer plus tard.
-   Les autres erreurs viennent du serveur (code faux, valeur refusée) : inutile de réessayer. */
-const READ_FNS={getData:1,getPlan:1};
-function netErr(m){const e=new Error(m);e.net=true;return e}
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-async function apiOnce(fn,args){
-  const ctl=typeof AbortController!=="undefined"?new AbortController():null;
-  const t=ctl&&setTimeout(()=>ctl.abort(),30000);
-  let r;
-  try{r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn,args}),redirect:"follow",signal:ctl&&ctl.signal})}
-  catch(e){throw netErr(e&&e.name==="AbortError"?"Le serveur met trop de temps à répondre.":"Pas de connexion au serveur.")}
-  finally{if(t)clearTimeout(t)}
-  if(!r.ok){if(r.status>=500||r.status===429)throw netErr("Serveur momentanément indisponible ("+r.status+").");throw new Error("Serveur injoignable ("+r.status+").")}
-  let j;try{j=await r.json()}catch(e){throw netErr("Réponse illisible du serveur.")}
-  if(!j||!j.ok)throw new Error(j&&j.error||"Réponse illisible du serveur.");
-  return j.data;
+function errMsg(e){return (e&&e.message?e.message:String(e||"")).replace(/^Error:\s*/,"")||"Erreur inconnue."}
+
+/* ================== Firebase (même projet que l'appli Équipe) ==================
+   Relevés : collection TempReleves · seuils et points de mesure : TempReglages
+   Lecture libre. Écriture : connexion anonyme + code de saisie vérifié par les règles Firestore. */
+const FIREBASE={
+  apiKey:"AIzaSyARtP0RMkulG6c53-bnazwpGTspl0LgAhk", // clé publique (faite pour être dans la page)
+  authDomain:"equipe-batiment.firebaseapp.com",
+  projectId:"equipe-batiment",
+  storageBucket:"equipe-batiment.firebasestorage.app",
+  messagingSenderId:"408022301135",
+  appId:"1:408022301135:web:69dee0a5fb479154657aba"
+};
+const FBV="10.14.1";
+const [{initializeApp},A,F]=await Promise.all([
+  import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-app.js`),
+  import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-auth.js`),
+  import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-firestore.js`)]);
+const fbApp=initializeApp(FIREBASE),auth=A.getAuth(fbApp);
+let db;
+try{db=F.initializeFirestore(fbApp,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})})}
+catch(e){db=F.getFirestore(fbApp)} /* navigation privée : pas de copie sur l'appareil */
+const DAYS_KEPT_ON_SCREEN=60;
+
+function fbErr(e){
+  const c=e&&e.code||"";
+  if(c==="permission-denied")return "Code de saisie incorrect (ou changé depuis) : ressaisissez-le dans « Nouveau relevé ».";
+  if(c==="unavailable"||c==="auth/network-request-failed")return "Pas de connexion au serveur.";
+  if(c==="auth/admin-restricted-operation"||c==="auth/operation-not-allowed")return "Saisie indisponible : connexion anonyme non activée dans Firebase.";
+  return errMsg(e);
 }
-async function api(fn,...args){
-  const tries=READ_FNS[fn]?3:1;
+const withTimeout=(p,ms,msg)=>Promise.race([p,wait(ms).then(()=>{throw new Error(msg)})]);
+
+/* Code de saisie : vérifié une fois en ligne (fiche TempSessions de l'appareil), ensuite les saisies passent même hors connexion */
+async function ensureSession(code){
+  await auth.authStateReady();
+  if(!auth.currentUser)await withTimeout(A.signInAnonymously(auth),15000,"Pas de connexion : la première saisie du code demande internet.").catch(e=>{throw new Error(fbErr(e))});
+  const uid=auth.currentUser.uid;
+  if(store.get("sessionCode")===code&&store.get("sessionUid")===uid)return;
+  try{await withTimeout(F.setDoc(F.doc(db,"TempSessions",uid),{code,at:new Date().toISOString()}),15000,"Pas de connexion : la vérification du code demande internet.")}
+  catch(e){if(e&&e.code==="permission-denied")throw new Error("Code de saisie incorrect.");throw new Error(fbErr(e))}
+  store.set("sessionCode",code);store.set("sessionUid",uid);
+}
+/* Envoi refusé par le serveur après coup (code changé entre-temps) */
+function refused(e,what){if(e&&e.code==="permission-denied")store.set("sessionCode","");toast(what+" refusé : "+fbErr(e))}
+
+/* Plan : image servie par le script Google de l'ancienne version, puis gardée sur l'appareil */
+const API_URL="https://script.google.com/macros/s/AKfycbw-PNxvwdYDCxvpRmzgiUh4que52lMHozmW8P8io8clMQnGaVIFfGiT6rh6MshydGLPAQ/exec";
+async function getPlan(){
   for(let i=0;;i++){
-    try{return await apiOnce(fn,args)}
-    catch(e){if(!e.net||i>=tries-1)throw e;await wait(1500*(i+1))}
+    try{
+      const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn:"getPlan",args:[]}),redirect:"follow"});
+      const j=await r.json();if(!j||!j.ok)throw new Error(j&&j.error||"Plan indisponible");return j.data;
+    }catch(e){if(i>=2)throw e;await wait(1500*(i+1))}
   }
 }
-/* Plan : chargé une fois depuis le serveur puis gardé sur l'appareil */
 let planReady;
 function loadPlan(){
   const img=$("plan-img"),show=b64=>new Promise(r=>{img.onload=r;img.onerror=r;img.src="data:image/jpeg;base64,"+b64});
   const cached=store.get("planB64");
-  planReady=cached?show(cached):api("getPlan").then(b=>{store.set("planB64",b);return show(b)}).catch(()=>{});
+  planReady=cached?show(cached):getPlan().then(b=>{store.set("planB64",b);return show(b)}).catch(()=>{});
 }
-function errMsg(e){return (e&&e.message?e.message:String(e||"")).replace(/^Error:\s*/,"")||"Erreur inconnue."}
 
-/* Relevés en attente d'envoi (saisis sans réseau) : gardés sur l'appareil jusqu'à leur envoi */
-const pending={
-  list(){try{return JSON.parse(store.get("pendingRounds")||"[]")}catch(e){return []}},
-  save(l){store.set("pendingRounds",JSON.stringify(l))},
-  add(p){const l=this.list();l.push(p);this.save(l)},
-  remove(cid){this.save(this.list().filter(p=>p.round.cid!==cid))},
-  mark(cid,err){const l=this.list();l.forEach(p=>{if(p.round.cid===cid)p.err=err});this.save(l)}
-};
-const newCid=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
-
-let lastData=null,cacheAt=null;
-/* src : "server" (réponse fraîche), "cache" (copie gardée sur l'appareil), "local" (simple réaffichage) */
-function apply(d,src="server"){
-  lastData=d;
-  POINTS=d.points.map(([id,label,sector,x,y,short])=>({id,label,sector,x,y,short}));
+/* Données en direct : chaque relevé enregistré (ici ou ailleurs) s'affiche tout seul */
+let gotPoints=false,gotRounds=false,fromCache=false;
+function setPoints(list){
+  POINTS=list.map(([id,label,sector,x,y,short])=>({id,label,sector,x,y,short}));
   SECTORS=[];POINTS.forEach(p=>{let s=SECTORS.find(s=>s.name===p.sector);if(!s)SECTORS.push(s={name:p.sector,pts:[]});s.pts.push([p.id,p.label])});
-  const pend=pending.list().map(p=>({...p.round,_id:"p:"+p.round.cid,_pending:true,_err:p.err}));
-  rounds=(d.rounds||[]).concat(pend);seuils=d.seuils||seuils;loaded=true;
-  if(src==="server"){cacheAt=new Date();$("status").textContent="";store.set("dataCache",JSON.stringify({at:cacheAt.toISOString(),d}))}
-  render();pendNote();
+}
+function refresh(){
+  loaded=gotPoints&&gotRounds;
+  if(loaded)$("status").textContent=fromCache?"Hors connexion : affichage des relevés gardés sur l'appareil, mise à jour dès le retour du réseau.":"";
+  if(gotPoints)render();
+  pendNote();
 }
 function pendNote(){
-  const l=pending.list(),ko=l.filter(p=>p.err);
-  $("pendnote").textContent=!l.length?"":
-    (l.length-ko.length?`${l.length-ko.length} relevé${l.length-ko.length>1?"s":""} en attente d'envoi (⏳), envoi automatique dès que le réseau revient. `:"")+
-    (ko.length?`${ko.length} relevé${ko.length>1?"s":""} refusé${ko.length>1?"s":""} par le serveur : ${ko[0].err} Supprimez-le et ressaisissez-le.`:"");
+  const n=rounds.filter(r=>r._pending).length;
+  $("pendnote").textContent=n?`${n} modification${n>1?"s":""} en attente d'envoi (⏳), envoi automatique dès que le réseau revient.`:"";
 }
-let loading=null;
-function load(){
-  if(loading)return loading;
-  loading=api("getData").then(d=>apply(d)).catch(e=>{
-    $("status").textContent=cacheAt?`Hors connexion : affichage des relevés connus au ${cacheAt.toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}. (${errMsg(e)})`:"Relevés indisponibles : "+errMsg(e);
-  }).finally(()=>{loading=null});
-  return loading;
+function start(){
+  const fail=e=>{$("status").textContent="Relevés indisponibles : "+fbErr(e)};
+  try{const c=JSON.parse(store.get("pointsCache")||"null");if(c&&c.length){setPoints(c);gotPoints=true}}catch(e){}
+  F.onSnapshot(F.doc(db,"TempReglages","points"),s=>{
+    if(!s.exists())return;const list=JSON.parse(s.data().json||"[]");if(!list.length)return;
+    setPoints(list);store.set("pointsCache",JSON.stringify(list));gotPoints=true;refresh();
+  },fail);
+  F.onSnapshot(F.doc(db,"TempReglages","seuils"),s=>{
+    if(!s.exists())return;const d=s.data();if(typeof d.min==="number"&&typeof d.max==="number"){seuils={min:d.min,max:d.max};refresh()}
+  },fail);
+  const since=new Date(Date.now()-DAYS_KEPT_ON_SCREEN*86400000).toISOString();
+  F.onSnapshot(F.query(F.collection(db,"TempReleves"),F.where("at",">=",since)),{includeMetadataChanges:true},s=>{
+    rounds=s.docs.map(d=>{const r=d.data();return {...r,values:r.values||{},ext:r.ext??null,dju:r.dju??null,_id:d.id,_pending:d.metadata.hasPendingWrites}});
+    fromCache=s.metadata.fromCache;gotRounds=true;refresh();
+  },fail);
 }
-/* Envoi des relevés en attente, dans l'ordre */
-let flushing=false;
-async function flush(){
-  if(flushing)return;const l=pending.list().filter(p=>!p.err);if(!l.length)return;flushing=true;
-  try{
-    for(const p of l){
-      try{const d=await api("saveRound",p.round,p.code);pending.remove(p.round.cid);apply(d);toast("Relevé en attente envoyé")}
-      catch(e){if(e.net)break;pending.mark(p.round.cid,errMsg(e));if(lastData)apply(lastData,"local")}
-    }
-  }finally{flushing=false;pendNote()}
-}
+const newCid=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
 
 const fmt=v=>v==null||isNaN(v)?"–":v.toLocaleString("fr-FR",{minimumFractionDigits:1,maximumFractionDigits:1});
 const dayKey=iso=>{const d=new Date(iso);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
@@ -542,14 +559,16 @@ $("x-go").onclick=async()=>{
 let tt;function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2600)}
 $("day").onchange=e=>{day=e.target.value;render()};
 
+
 function needCode(){const c=store.get("codeSaisie");if(!c)toast("Saisissez d'abord votre code dans « Nouveau relevé »");return c}
 async function saveSeuils(){
-  const mn=parseFloat($("smin").value),mx=parseFloat($("smax").value);
-  if(isNaN(mn)||isNaN(mx)||mn>=mx){$("smin").value=seuils.min;$("smax").value=seuils.max;return toast("Le seuil bas doit être inférieur au seuil haut")}
+  const mn=parseFloat($("smin").value),mx=parseFloat($("smax").value),undo=()=>{$("smin").value=seuils.min;$("smax").value=seuils.max};
+  if(isNaN(mn)||isNaN(mx)||mn>=mx){undo();return toast("Le seuil bas doit être inférieur au seuil haut")}
   if(mn===seuils.min&&mx===seuils.max)return;
-  const code=needCode();if(!code){$("smin").value=seuils.min;$("smax").value=seuils.max;return}
-  try{apply(await api("saveSeuils",mn,mx,code));toast("Plage enregistrée")}
-  catch(e){$("smin").value=seuils.min;$("smax").value=seuils.max;toast(errMsg(e))}
+  const code=needCode();if(!code)return undo();
+  try{await ensureSession(code)}catch(e){undo();return toast(errMsg(e))}
+  F.setDoc(F.doc(db,"TempReglages","seuils"),{min:mn,max:mx}).catch(e=>{refused(e,"Changement de plage");undo()});
+  toast("Plage enregistrée");
 }
 $("smin").onchange=saveSeuils;$("smax").onchange=saveSeuils;
 
@@ -574,23 +593,19 @@ $("form").onsubmit=async e=>{
   if(!code)return err("Saisissez le code de saisie communiqué par Eurexpo.");
   if(bad.length)return err("Valeur à corriger : "+bad.join(", ")+" (nombre entre -10 et 45).");
   if(!Object.keys(values).length)return err("Saisissez au moins une température.");
+  const iso=new Date(at).toISOString();
   $("f-save").disabled=true;$("f-save").textContent="Enregistrement…";
-  let data=null;const iso=new Date(at).toISOString();
-  const round={at:iso,salon:$("f-salon").value.trim(),auteur:$("f-auteur").value.trim(),values,cid:newCid()};
-  try{data=await api("saveRound",round,code)}
-  catch(ex){
-    if(ex.net){ /* pas de réseau : le relevé est gardé sur l'appareil et partira tout seul */
-      pending.add({round,code});store.set("codeSaisie",code);store.set("auteur",round.auteur);
-      $("overlay").hidden=true;day=dayKey(iso);if(lastData)apply(lastData,"local");
-      toast("Pas de réseau : relevé gardé sur l'appareil, envoi automatique");
-    }else err("Relevé non enregistré : "+errMsg(ex));
-  }
-  if(data){
-    store.set("codeSaisie",code);store.set("auteur",$("f-auteur").value.trim());
-    $("overlay").hidden=true;toast("Relevé enregistré");
-    try{day=dayKey(iso);apply(data)}catch(ex){$("status").textContent="Relevé enregistré, mais l'affichage a échoué ("+errMsg(ex)+"). Rechargez la page."}
-  }
-  $("f-save").disabled=false;$("f-save").textContent="Enregistrer";
+  try{
+    await ensureSession(code);
+    const auteur=$("f-auteur").value.trim().slice(0,80);
+    const round={at:iso,salon:$("f-salon").value.trim().slice(0,120),auteur,values,ext:null,dju:null,uid:auth.currentUser.uid,cree:new Date().toISOString()};
+    /* Enregistré tout de suite sur l'appareil, envoyé au serveur dès que possible (même sans réseau) */
+    F.setDoc(F.doc(db,"TempReleves",newCid()),round).catch(ex=>refused(ex,"Relevé"));
+    store.set("codeSaisie",code);store.set("auteur",auteur);
+    $("overlay").hidden=true;day=dayKey(iso);render();
+    toast(navigator.onLine?"Relevé enregistré":"Pas de réseau : relevé gardé sur l'appareil, envoi automatique");
+  }catch(ex){err("Relevé non enregistré : "+errMsg(ex))}
+  finally{$("f-save").disabled=false;$("f-save").textContent="Enregistrer"}
 };
 
 let pendingDel=null;
@@ -598,19 +613,16 @@ $("hist").onclick=async e=>{
   const b=e.target.closest("[data-del]");if(!b)return;
   if(pendingDel!==b.dataset.del){pendingDel=b.dataset.del;b.textContent="confirmer ?";return}
   pendingDel=null;
-  if(b.dataset.del.startsWith("p:")){pending.remove(b.dataset.del.slice(2));if(lastData)apply(lastData,"local");return toast("Relevé en attente supprimé")}
   const code=needCode();if(!code)return render();
-  try{apply(await api("deleteRound",b.dataset.del,code));toast("Relevé supprimé")}catch(ex){toast(errMsg(ex));render()}
+  try{await ensureSession(code)}catch(ex){toast(errMsg(ex));return render()}
+  F.deleteDoc(F.doc(db,"TempReleves",b.dataset.del)).catch(ex=>refused(ex,"Suppression"));
+  toast("Relevé supprimé");
 };
 
 render();
-/* Affichage immédiat de la dernière copie gardée sur l'appareil, en attendant le serveur */
-try{const c=JSON.parse(store.get("dataCache")||"null");if(c&&c.d&&c.d.points){apply(c.d,"cache");cacheAt=new Date(c.at);$("status").textContent="Mise à jour des relevés…"}}catch(e){}
-loadPlan();load().then(flush);
-if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
-setInterval(()=>{if($("overlay").hidden&&!document.hidden)flush().then(load)},60000);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)flush().then(load)});
-window.addEventListener("online",()=>flush().then(load));
+loadPlan();start();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+
 </script>
 </body>
 </html>

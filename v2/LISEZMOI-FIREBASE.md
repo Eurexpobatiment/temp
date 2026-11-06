@@ -3,7 +3,8 @@
 Même appli que la version actuelle, avec les relevés dans **Firebase** (projet `equipe-batiment`, le même que l'appli Équipe) au lieu du Google Sheet :
 affichage en direct (un relevé saisi par un technicien apparaît tout seul chez les autres), consultation et saisie hors connexion.
 
-Adresse : https://eurexpobatiment.github.io/temp/v2/ — l'ancienne version (https://eurexpobatiment.github.io/temp/) reste en service pendant la transition.
+Adresse : https://eurexpobatiment.github.io/temp/ (version Firebase en service depuis le 6 nov. 2026 ; /v2/ redirige ici).
+L’ancienne version (Google Sheet) n’a plus de page ; le classeur reste comme archive et sert toujours à la météo (clé Météo-France en Réglages B4).
 
 Mise en place faite le 6 nov. 2026 (31 relevés copiés, mise à jour toutes les 10 minutes, appli conso en version 56).
 
