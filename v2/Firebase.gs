@@ -1,6 +1,6 @@
 /**
  * Températures des halls – passage à Firebase
- * Fichier à AJOUTER au projet Apps Script de l'appli températures (à côté de Code.gs, sans rien y changer).
+ * Fichier ajouté au projet Apps Script de l'appli températures (à côté de Code.gs, sans rien y changer).
  *
  *  1. copierVersFirebase() : à lancer une fois. Copie tous les relevés de l'onglet « Relevés »,
  *     la plage de confort et les points de mesure dans Firebase. Peut être relancée sans créer de doublons.
@@ -80,16 +80,16 @@ function fbCopierReleves_(joursMax) {
   }
   if (!writes.length) return 0;
   const tok = fbToken_();
+  const existe = fbIdsExistants_(tok);
   let n = 0, erreurs = [];
-  for (let k = 0; k < writes.length; k += 400) {
-    const res = fbFetch_("post", FB_URL + ":batchWrite", tok, { writes: writes.slice(k, k + 400) });
-    (res.status || []).forEach((st, j) => {
-      const code = st && st.code || 0;
-      const [id, t] = ids[k + j];
-      if (code === 0) n++;
-      else if (code !== 6 && code !== 9) erreurs.push(id + " : " + (st.message || code)); // 6/9 = déjà présent
-      if (code === 0 || code === 6 || code === 9) deja[id] = t;
-    });
+  const todo = [];
+  writes.forEach((w, j) => { const [id, t] = ids[j]; if (existe[id]) deja[id] = t; else { delete w.currentDocument; todo.push([w, id, t]); } });
+  for (let k = 0; k < todo.length; k += 100) {
+    const lot = todo.slice(k, k + 100);
+    try { fbWrite_(tok, lot.map(x => x[0])); lot.forEach(x => { deja[x[1]] = x[2]; n++; }); }
+    catch (e) { // lot refusé : relevé par relevé pour trouver le fautif
+      lot.forEach(x => { try { fbWrite_(tok, [x[0]]); deja[x[1]] = x[2]; n++; } catch (e2) { erreurs.push(x[1] + " : " + e2.message); } });
+    }
   }
   // on ne garde la liste que sur 10 jours
   const old = Date.now() - 10 * 86400000;
@@ -97,6 +97,21 @@ function fbCopierReleves_(joursMax) {
   props.setProperty("FB_COPIES", JSON.stringify(deja));
   if (erreurs.length) console.warn(erreurs.length + " relevé(s) non copiés : " + erreurs.slice(0, 5).join(" | "));
   return n;
+}
+
+/** Identifiants des relevés déjà dans Firebase */
+function fbIdsExistants_(tok) {
+  const ids = {};
+  let page = "";
+  do {
+    const r = UrlFetchApp.fetch(FB_URL + "/TempReleves?pageSize=300&mask.fieldPaths=at" + (page ? "&pageToken=" + encodeURIComponent(page) : ""),
+      { headers: { Authorization: "Bearer " + tok }, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error("Firebase " + r.getResponseCode() + " : lecture des relevés");
+    const j = JSON.parse(r.getContentText() || "{}");
+    (j.documents || []).forEach(d => ids[d.name.split("/").pop()] = true);
+    page = j.nextPageToken || "";
+  } while (page);
+  return ids;
 }
 
 /** Ajoute la température extérieure et le DJU aux relevés des 3 derniers jours qui n'en ont pas */

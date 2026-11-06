@@ -5,6 +5,8 @@ affichage en direct (un relevé saisi par un technicien apparaît tout seul chez
 
 Adresse : https://eurexpobatiment.github.io/temp/v2/ — l'ancienne version (https://eurexpobatiment.github.io/temp/) reste en service pendant la transition.
 
+Mise en place faite le 6 nov. 2026 (31 relevés copiés, mise à jour toutes les 10 minutes, appli conso en version 56).
+
 Pour les techniciens Dalkia, rien ne change : pas de compte, le même **code de saisie**.
 La première saisie du code sur un appareil demande internet ; ensuite les relevés passent même sans réseau.
 
@@ -13,7 +15,7 @@ La première saisie du code sur un appareil demande internet ; ensuite les relev
 2. **Firestore Database › Règles** : coller le bloc de `firestore-temperatures.rules` juste avant les deux dernières `}`, puis **Publier**.
 3. **Firestore Database › Données** : créer la collection **TempSecret**, document **code**, champ **code** (chaîne) = le code de saisie de l'onglet Réglages du classeur des températures.
 4. **Script Google de l'appli températures** : ajouter le fichier `Firebase.gs`, puis exécuter `copierVersFirebase` (copie de tous les relevés, de la plage de confort et des points) et `installerFirebase` (météo et copie des relevés de l'ancienne version, toutes les 10 minutes).
-5. **Script Google de l'appli Consommations** : renommer `readTemp_` en `readTempSheet_` (et lui faire renvoyer l'`id` de chaque ligne), ajouter `conso-TemperaturesFirebase.gs`, puis Déployer › Gérer les déploiements › Nouvelle version.
+5. **Script Google de l'appli Consommations** : renommer `readTemp_` en `readTempSheet_` (et lui faire renvoyer l’`id` de chaque ligne), ajouter `conso-TemperaturesFirebase.gs` (fichier TemperaturesFirebase), puis Déployer › Gérer les déploiements › Nouvelle version.
 
 ## Fonctionnement
 - **Relevés** : collection `TempReleves` (un document par relevé). Lecture libre, comme l'appli actuelle.
