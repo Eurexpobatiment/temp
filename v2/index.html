@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f5f8b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Températures">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+<title>Températures halls Eurexpo</title>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout : bandeau de synthèse, puis tuiles par secteur (comme on lit le plan), puis historique du jour en tableau */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --ink:#18212b; --muted:#5d6b78; --line:#d5dce3;
+  --accent:#1f5f8b;
+  --cold:#2f6fb8; --cold-bg:#e3eefa;
+  --ok:#2d7a5a; --ok-bg:#e2f2ea;
+  --hot:#c4521d; --hot-bg:#fbe9df;
+  --cold-pin:#2463ad; --ok-pin:#237350; --hot-pin:#c0491a; --map-filter:none;
+  --font-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-num:"Barlow Semi Condensed","Barlow",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#11171d; --surface:#1a222b; --ink:#e6ecf1; --muted:#93a1ae; --line:#2c3743;
+  --accent:#6fb0de;
+  --cold:#7fb2ee; --cold-bg:#1a2c42; --ok:#6cc79c; --ok-bg:#16302a; --hot:#f09a6c; --hot-bg:#3a2218;
+  --map-filter:invert(.9) hue-rotate(180deg) brightness(.95);
+  color-scheme:dark}}
+:root.__unused{
+  --bg:#11171d; --surface:#1a222b; --ink:#e6ecf1; --muted:#93a1ae; --line:#2c3743;
+  --accent:#6fb0de;
+  --cold:#7fb2ee; --cold-bg:#1a2c42; --ok:#6cc79c; --ok-bg:#16302a; --hot:#f09a6c; --hot-bg:#3a2218;
+  --map-filter:invert(.9) hue-rotate(180deg) brightness(.95);
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.45}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:22px}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font-family:var(--font-num);font-weight:700;font-size:1.7rem;margin:0;letter-spacing:.01em;text-wrap:balance}
+.sub{color:var(--muted);margin:2px 0 0}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:inherit}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:600}
+.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select,input[type=text],input[type=number],input[type=datetime-local]{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+
+.summary{display:flex;flex-wrap:wrap;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.summary>div{flex:1 1 140px;padding:12px 16px;border-right:1px solid var(--line);min-width:0}
+.summary>div:last-child{border-right:0}
+.summary .v{font-size:1.6rem;font-weight:600;line-height:1.1;margin-top:2px}
+.summary .v small{font-size:.85rem;color:var(--muted);font-weight:500;font-family:var(--font-body)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;color:var(--muted);font-size:.88rem}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.seuils{display:inline-flex;gap:6px;align-items:center}
+.seuils input{width:64px;padding:4px 6px}
+
+.mapcard{padding:12px}
+.mapscroll{overflow-x:auto;border-radius:8px}
+.map{position:relative;min-width:640px;container-type:inline-size}
+.map img{display:block;filter:var(--map-filter);width:100%;max-width:none;height:auto;border-radius:8px}
+.pin{position:absolute;transform:translate(-50%,-50%);font-family:var(--font-num);font-weight:700;font-variant-numeric:tabular-nums;font-size:clamp(10px,1.75cqw,19px);line-height:1;padding:.28em .42em;border-radius:.35em;color:#fff;background:var(--muted);box-shadow:0 1px 3px rgba(0,0,0,.3);white-space:nowrap;cursor:default}
+.pin.froid{background:var(--cold-pin)} .pin.ok{background:var(--ok-pin)} .pin.chaud{background:var(--hot-pin)}
+.pin small{display:block;font-family:var(--font-body);font-weight:500;font-size:.5em;opacity:.9;margin-top:.15em;text-align:center}
+.sectors{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+.sector{display:grid;gap:8px;align-content:start}
+.sector h2{margin:0;font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600}
+.tiles{display:grid;gap:6px}
+.tile{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 12px;padding:9px 12px;border-radius:9px;background:var(--surface);border:1px solid var(--line)}
+.tile.froid{background:var(--cold-bg);border-color:transparent}
+.tile.ok{background:var(--ok-bg);border-color:transparent}
+.tile.chaud{background:var(--hot-bg);border-color:transparent}
+.tile .name{font-weight:500;min-width:0}
+.tile .t{font-size:1.65rem;font-weight:600;line-height:1;text-align:right}
+.froid .t{color:var(--cold)} .ok .t{color:var(--ok)} .chaud .t{color:var(--hot)}
+.tile .meta{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.82rem}
+.tile .delta{font-size:.82rem;color:var(--muted);text-align:right}
+.spark{display:block}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.card h2{margin:0 0 10px;font-family:var(--font-num);font-size:1.15rem;font-weight:600}
+.histhead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+.histhead h2{margin:0}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--surface)}
+thead th{font-weight:600;color:var(--muted);font-size:.82rem}
+td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weight:600}
+.del{border:0;background:none;color:var(--muted);cursor:pointer;font-size:.75rem;padding:0;text-decoration:underline}
+.del:hover{color:var(--hot)}
+
+.empty{padding:28px;text-align:center;color:var(--muted)}
+.note{color:var(--muted);font-size:.88rem;margin:0}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:8px;font-weight:500;z-index:30}
+
+/* Saisie */
+.overlay{position:fixed;inset:0;background:rgba(10,16,22,.45);z-index:20;display:flex;justify-content:center;align-items:flex-start;overflow-y:auto;padding-block:calc(16px + env(safe-area-inset-top,0px)) calc(16px + env(safe-area-inset-bottom,0px));padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+.form{background:var(--surface);border-radius:14px;width:100%;max-width:640px;padding:18px;display:grid;gap:14px}
+.form h2{margin:0;font-family:var(--font-num);font-size:1.3rem}
+.formrow{display:flex;flex-wrap:wrap;gap:12px}
+.formrow label{display:grid;gap:4px;flex:1 1 180px}
+.fgroup{display:grid;gap:6px}
+.fgroup h3{margin:6px 0 0;font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.fpoint{display:grid;grid-template-columns:1fr 92px;align-items:center;gap:10px}
+.fpoint input{text-align:right;font-family:var(--font-num);font-size:1.15rem;font-variant-numeric:tabular-nums}
+.fpoint input.bad{border-color:var(--hot)}
+.formbar{display:flex;gap:8px;justify-content:flex-end;position:sticky;bottom:0;background:var(--surface);padding-top:8px}
+.err{color:var(--hot);font-size:.9rem;margin:0}
+@media (prefers-reduced-motion:no-preference){.tile{transition:background .3s}}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Températures des halls</h1>
+      <p class="sub" id="sub">Eurexpo Lyon · relevés Dalkia</p>
+    </div>
+    <div class="actions">
+      <select id="day" aria-label="Journée affichée"></select>
+      <button class="btn" id="copy">Copier le résumé</button>
+      <button class="btn" id="wa">Envoyer le plan sur WhatsApp</button>
+      <button class="btn" id="xls">Extraction Excel</button>
+      <button class="btn primary" id="new">Nouveau relevé</button>
+    </div>
+  </header>
+
+  <section class="summary" id="summary" aria-label="Synthèse du dernier relevé"></section>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--cold)"></span>Sous le seuil</span>
+    <span><span class="dot" style="background:var(--ok)"></span>Dans la plage</span>
+    <span><span class="dot" style="background:var(--hot)"></span>Au-dessus</span>
+    <span class="seuils">Plage de confort
+      <input type="number" step="0.5" id="smin" aria-label="Seuil bas"> à
+      <input type="number" step="0.5" id="smax" aria-label="Seuil haut"> °C</span>
+  </div>
+
+  <section class="card mapcard" aria-label="Plan des températures">
+    <div class="mapscroll"><div class="map"><img id="plan-img" alt="Plan de masse d'Eurexpo avec les températures relevées" width="1400" height="1107"><div id="pins"></div></div></div>
+  </section>
+
+  <section class="sectors" id="sectors" aria-label="Températures par secteur"></section>
+
+  <section class="card">
+    <div class="histhead"><h2>Historique de la journée</h2><span class="note" id="histnote"></span></div>
+    <div class="tablewrap" id="hist"></div>
+  </section>
+
+  <p class="note" id="pendnote" style="color:var(--hot)"></p>
+  <p class="note" id="status">Chargement des relevés…</p>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <form class="form" id="form" novalidate>
+    <h2>Nouveau relevé</h2>
+    <p class="note">Les valeurs du relevé précédent sont pré-remplies : ne modifiez que ce qui a changé. Virgule ou point acceptés.</p>
+    <div class="formrow">
+      <label><span class="label">Date et heure</span><input type="datetime-local" id="f-at" required></label>
+      <label><span class="label">Salon / événement</span><input type="text" id="f-salon" placeholder="ex. Equip'Hotel"></label>
+    </div>
+    <div class="formrow">
+      <label><span class="label">Saisi par</span><input type="text" id="f-auteur" placeholder="Nom du technicien"></label>
+      <label><span class="label">Code de saisie</span><input type="password" id="f-code" inputmode="numeric" autocomplete="off"></label>
+    </div>
+    <div id="f-points"></div>
+    <p class="err" id="f-err" hidden></p>
+    <div class="formbar">
+      <button type="button" class="btn" id="f-cancel">Annuler</button>
+      <button type="submit" class="btn primary" id="f-save">Enregistrer</button>
+    </div>
+  </form>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="overlay" id="shotbox" hidden>
+  <div class="form">
+    <h2>Image du plan</h2>
+    <p class="note">Sur téléphone : appui long sur l'image, puis « Partager » et WhatsApp (ou « Enregistrer l'image », puis joignez-la dans WhatsApp). Sur ordinateur : téléchargez l'image et glissez-la dans la discussion WhatsApp.</p>
+    <img id="shot-img" alt="Plan d'Eurexpo avec les températures du dernier relevé" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    <div class="formbar">
+      <a class="btn" id="shot-txt" href="https://wa.me/" target="_blank" rel="noopener" style="text-decoration:none">Envoyer le texte</a>
+      <a class="btn" id="shot-dl" download="temperatures-halls.png" style="text-decoration:none">Télécharger l'image</a>
+      <button type="button" class="btn primary" id="shot-close">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="xbox" hidden>
+  <div class="form">
+    <h2>Extraction Excel</h2>
+    <label style="display:grid;gap:4px"><span class="label">Salon / événement</span><select id="x-salon"></select></label>
+    <p class="note" id="x-info"></p>
+    <p class="note">Le fichier contient un onglet « Relevés » (une ligne par relevé, une colonne par point de mesure) et un onglet « Par point » (moyenne, mini, maxi et nombre de relevés hors plage pour chaque point).</p>
+    <p class="err" id="x-err" hidden></p>
+    <div class="formbar">
+      <button type="button" class="btn" id="x-cancel">Annuler</button>
+      <button type="button" class="btn primary" id="x-go">Enregistrer le fichier Excel</button>
+    </div>
+  </div>
+</div>
+
+<style>body{margin:0;font-size:15px}[hidden]{display:none!important}</style>
+<script type="module">
+let POINTS=[],SECTORS=[],rounds=[],seuils={min:19,max:22},day=null,loaded=false;
+const $=id=>document.getElementById(id);
+const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return ""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+function errMsg(e){return (e&&e.message?e.message:String(e||"")).replace(/^Error:\s*/,"")||"Erreur inconnue."}
+
+/* ================== Firebase (même projet que l'appli Équipe) ==================
+   Relevés : collection TempReleves · seuils et points de mesure : TempReglages
+   Lecture libre. Écriture : connexion anonyme + code de saisie vérifié par les règles Firestore. */
+const FIREBASE={
+  apiKey:"AIzaSyARtP0RMkulG6c53-bnazwpGTspl0LgAhk", // clé publique (faite pour être dans la page)
+  authDomain:"equipe-batiment.firebaseapp.com",
+  projectId:"equipe-batiment",
+  storageBucket:"equipe-batiment.firebasestorage.app",
+  messagingSenderId:"408022301135",
+  appId:"1:408022301135:web:69dee0a5fb479154657aba"
+};
+const FBV="10.14.1";
+const [{initializeApp},A,F]=await Promise.all([
+  import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-app.js`),
+  import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-auth.js`),
+  import(`https://www.gstatic.com/firebasejs/${FBV}/firebase-firestore.js`)]);
+const fbApp=initializeApp(FIREBASE),auth=A.getAuth(fbApp);
+let db;
+try{db=F.initializeFirestore(fbApp,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})})}
+catch(e){db=F.getFirestore(fbApp)} /* navigation privée : pas de copie sur l'appareil */
+const DAYS_KEPT_ON_SCREEN=60;
+
+function fbErr(e){
+  const c=e&&e.code||"";
+  if(c==="permission-denied")return "Code de saisie incorrect (ou changé depuis) : ressaisissez-le dans « Nouveau relevé ».";
+  if(c==="unavailable"||c==="auth/network-request-failed")return "Pas de connexion au serveur.";
+  if(c==="auth/admin-restricted-operation"||c==="auth/operation-not-allowed")return "Saisie indisponible : connexion anonyme non activée dans Firebase.";
+  return errMsg(e);
+}
+const withTimeout=(p,ms,msg)=>Promise.race([p,wait(ms).then(()=>{throw new Error(msg)})]);
+
+/* Code de saisie : vérifié une fois en ligne (fiche TempSessions de l'appareil), ensuite les saisies passent même hors connexion */
+async function ensureSession(code){
+  await auth.authStateReady();
+  if(!auth.currentUser)await withTimeout(A.signInAnonymously(auth),15000,"Pas de connexion : la première saisie du code demande internet.").catch(e=>{throw new Error(fbErr(e))});
+  const uid=auth.currentUser.uid;
+  if(store.get("sessionCode")===code&&store.get("sessionUid")===uid)return;
+  try{await withTimeout(F.setDoc(F.doc(db,"TempSessions",uid),{code,at:new Date().toISOString()}),15000,"Pas de connexion : la vérification du code demande internet.")}
+  catch(e){if(e&&e.code==="permission-denied")throw new Error("Code de saisie incorrect.");throw new Error(fbErr(e))}
+  store.set("sessionCode",code);store.set("sessionUid",uid);
+}
+/* Envoi refusé par le serveur après coup (code changé entre-temps) */
+function refused(e,what){if(e&&e.code==="permission-denied")store.set("sessionCode","");toast(what+" refusé : "+fbErr(e))}
+
+/* Plan : image servie par le script Google de l'ancienne version, puis gardée sur l'appareil */
+const API_URL="https://script.google.com/macros/s/AKfycbw-PNxvwdYDCxvpRmzgiUh4que52lMHozmW8P8io8clMQnGaVIFfGiT6rh6MshydGLPAQ/exec";
+async function getPlan(){
+  for(let i=0;;i++){
+    try{
+      const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({fn:"getPlan",args:[]}),redirect:"follow"});
+      const j=await r.json();if(!j||!j.ok)throw new Error(j&&j.error||"Plan indisponible");return j.data;
+    }catch(e){if(i>=2)throw e;await wait(1500*(i+1))}
+  }
+}
+let planReady;
+function loadPlan(){
+  const img=$("plan-img"),show=b64=>new Promise(r=>{img.onload=r;img.onerror=r;img.src="data:image/jpeg;base64,"+b64});
+  const cached=store.get("planB64");
+  planReady=cached?show(cached):getPlan().then(b=>{store.set("planB64",b);return show(b)}).catch(()=>{});
+}
+
+/* Données en direct : chaque relevé enregistré (ici ou ailleurs) s'affiche tout seul */
+let gotPoints=false,gotRounds=false,fromCache=false;
+function setPoints(list){
+  POINTS=list.map(([id,label,sector,x,y,short])=>({id,label,sector,x,y,short}));
+  SECTORS=[];POINTS.forEach(p=>{let s=SECTORS.find(s=>s.name===p.sector);if(!s)SECTORS.push(s={name:p.sector,pts:[]});s.pts.push([p.id,p.label])});
+}
+function refresh(){
+  loaded=gotPoints&&gotRounds;
+  if(loaded)$("status").textContent=fromCache?"Hors connexion : affichage des relevés gardés sur l'appareil, mise à jour dès le retour du réseau.":"";
+  if(gotPoints)render();
+  pendNote();
+}
+function pendNote(){
+  const n=rounds.filter(r=>r._pending).length;
+  $("pendnote").textContent=n?`${n} modification${n>1?"s":""} en attente d'envoi (⏳), envoi automatique dès que le réseau revient.`:"";
+}
+function start(){
+  const fail=e=>{$("status").textContent="Relevés indisponibles : "+fbErr(e)};
+  try{const c=JSON.parse(store.get("pointsCache")||"null");if(c&&c.length){setPoints(c);gotPoints=true}}catch(e){}
+  F.onSnapshot(F.doc(db,"TempReglages","points"),s=>{
+    if(!s.exists())return;const list=JSON.parse(s.data().json||"[]");if(!list.length)return;
+    setPoints(list);store.set("pointsCache",JSON.stringify(list));gotPoints=true;refresh();
+  },fail);
+  F.onSnapshot(F.doc(db,"TempReglages","seuils"),s=>{
+    if(!s.exists())return;const d=s.data();if(typeof d.min==="number"&&typeof d.max==="number"){seuils={min:d.min,max:d.max};refresh()}
+  },fail);
+  const since=new Date(Date.now()-DAYS_KEPT_ON_SCREEN*86400000).toISOString();
+  F.onSnapshot(F.query(F.collection(db,"TempReleves"),F.where("at",">=",since)),{includeMetadataChanges:true},s=>{
+    rounds=s.docs.map(d=>{const r=d.data();return {...r,values:r.values||{},ext:r.ext??null,dju:r.dju??null,_id:d.id,_pending:d.metadata.hasPendingWrites}});
+    fromCache=s.metadata.fromCache;gotRounds=true;refresh();
+  },fail);
+}
+const newCid=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
+
+const fmt=v=>v==null||isNaN(v)?"–":v.toLocaleString("fr-FR",{minimumFractionDigits:1,maximumFractionDigits:1});
+const dayKey=iso=>{const d=new Date(iso);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+const hhmm=iso=>new Date(iso).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+const dayLabel=k=>{const [y,m,d]=k.split("-").map(Number);return new Date(y,m-1,d).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})};
+const status=v=>v==null||isNaN(v)?"na":v<seuils.min?"froid":v>seuils.max?"chaud":"ok";
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function dayRounds(){return rounds.filter(r=>dayKey(r.at)===day).sort((a,b)=>a.at<b.at?-1:1)}
+
+function render(){
+  const keys=[...new Set(rounds.map(r=>dayKey(r.at)))].sort().reverse();
+  if(!day||!keys.includes(day)) day=keys[0]||null;
+  $("day").innerHTML=keys.length?keys.map(k=>`<option value="${k}"${k===day?" selected":""}>${dayLabel(k)}</option>`).join(""):`<option>Aucun relevé</option>`;
+  $("smin").value=seuils.min;$("smax").value=seuils.max;
+  const dr=dayRounds(),last=dr[dr.length-1],prev=dr[dr.length-2];
+  updateWa();
+  if(!last){
+    $("summary").innerHTML=`<div class="empty" style="flex:1">${loaded?"Aucun relevé enregistré pour l'instant. Utilisez « Nouveau relevé » pour saisir le premier.":"Chargement…"}</div>`;
+    $("sectors").innerHTML="";$("pins").innerHTML="";$("hist").innerHTML="";$("histnote").textContent="";
+    return;
+  }
+  $("sub").textContent=`Eurexpo Lyon${last.salon?" · "+last.salon:""} · dernier relevé ${hhmm(last.at)}${last.auteur?" par "+last.auteur:""}`;
+  const vals=POINTS.map(p=>last.values[p.id]).filter(v=>typeof v==="number");
+  const mn=Math.min(...vals),mx=Math.max(...vals),avg=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const pmin=POINTS.find(p=>last.values[p.id]===mn),pmax=POINTS.find(p=>last.values[p.id]===mx);
+  const nCold=vals.filter(v=>v<seuils.min).length,nHot=vals.filter(v=>v>seuils.max).length;
+  $("summary").innerHTML=`
+    <div><div class="label">Relevé de</div><div class="v num">${hhmm(last.at)} <small>${dr.length} relevé${dr.length>1?"s":""} ce jour</small></div></div>
+    <div><div class="label">Moyenne</div><div class="v num">${fmt(avg)} <small>°C · ${vals.length} points</small></div></div>
+    <div><div class="label">Plus froid</div><div class="v num" style="color:var(--cold)">${fmt(mn)} <small>${esc(pmin?.label)}</small></div></div>
+    <div><div class="label">Plus chaud</div><div class="v num" style="color:var(--hot)">${fmt(mx)} <small>${esc(pmax?.label)}</small></div></div>
+    <div><div class="label">Hors plage</div><div class="v num">${nCold+nHot} <small>${nCold} froid · ${nHot} chaud</small></div></div>
+    <div><div class="label">Extérieur Bron</div><div class="v num">${last.ext!=null?fmt(last.ext)+" <small>°C</small>":"–"} <small>DJU veille ${last.dju!=null?fmt(last.dju):"–"}</small></div></div>`;
+  $("pins").innerHTML=POINTS.map(p=>{const v=last.values[p.id];
+    return `<div class="pin ${status(v)}" style="left:${p.x}%;top:${p.y}%" title="${esc(p.label)} : ${fmt(v)} °C">${fmt(v)}<small>${esc(p.short)}</small></div>`}).join("");
+  $("sectors").innerHTML=SECTORS.map(s=>`<div class="sector"><h2>${s.name}</h2><div class="tiles">${s.pts.map(([id,label])=>{
+    const v=last.values[id],pv=prev?.values?.[id],st=status(v);
+    const d=(typeof v==="number"&&typeof pv==="number")?v-pv:null;
+    const dTxt=d==null?"":Math.abs(d)<0.05?"= stable":(d>0?"▲ +":"▼ −")+fmt(Math.abs(d));
+    return `<div class="tile ${st}"><div class="name">${esc(label)}</div><div class="t num">${fmt(v)}</div>
+      <div class="meta">${spark(dr.map(r=>r.values[id]))}</div><div class="delta num">${dTxt}</div></div>`}).join("")}</div></div>`).join("");
+  $("histnote").textContent=prev?`Variation affichée sur les tuiles : par rapport au relevé de ${hhmm(prev.at)}`:"";
+  $("hist").innerHTML=`<table><thead><tr><th>Point de mesure</th>${dr.map(r=>`<th class="num"${r._pending?` title="${r._err?"Refusé par le serveur : "+esc(r._err):"En attente d'envoi"}"`:""}>${hhmm(r.at)}${r._pending?(r._err?" ⚠":" ⏳"):""}<br><button class="del" data-del="${esc(r._id)}">supprimer</button></th>`).join("")}</tr></thead>
+    <tbody>${POINTS.map(p=>`<tr><td>${esc(p.label)}</td>${dr.map(r=>{const v=r.values[p.id];return `<td class="num ${status(v)}">${fmt(v)}</td>`}).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function spark(series){
+  const pts=series.map((v,i)=>[i,v]).filter(([,v])=>typeof v==="number");
+  if(pts.length<2) return `<span>${pts.length?"1 mesure ce jour":""}</span>`;
+  const W=90,H=22,lo=Math.min(seuils.min,...pts.map(p=>p[1]))-0.3,hi=Math.max(seuils.max,...pts.map(p=>p[1]))+0.3,n=series.length-1;
+  const x=i=>2+i/n*(W-4),y=v=>H-2-(v-lo)/(hi-lo)*(H-4);
+  const line=pts.map(([i,v])=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const [li,lv]=pts[pts.length-1];
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">
+    <rect x="0" y="${y(seuils.max).toFixed(1)}" width="${W}" height="${(y(seuils.min)-y(seuils.max)).toFixed(1)}" fill="var(--line)" opacity=".5"/>
+    <polyline points="${line}" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+    <circle cx="${x(li).toFixed(1)}" cy="${y(lv).toFixed(1)}" r="2.6" fill="var(--ink)"/></svg>`;
+}
+
+function summaryText(){
+  const dr=dayRounds(),last=dr[dr.length-1];if(!last)return null;
+  const d=new Date(last.at).toLocaleDateString("fr-FR");
+  const lines=[`Températures halls Eurexpo – ${d} ${hhmm(last.at)}${last.salon?" – "+last.salon:""}`,`Plage de confort : ${fmt(seuils.min)} à ${fmt(seuils.max)} °C`];
+  if(last.ext!=null||last.dju!=null)lines.push(`Extérieur Bron : ${fmt(last.ext)} °C · DJU veille : ${fmt(last.dju)}`);
+  lines.push("");
+  const out=POINTS.filter(p=>["froid","chaud"].includes(status(last.values[p.id])));
+  if(out.length){lines.push("Hors plage :");out.forEach(p=>lines.push(`  ${p.label} : ${fmt(last.values[p.id])} °C (${status(last.values[p.id])})`));lines.push("")}
+  SECTORS.forEach(s=>lines.push(s.name+" : "+s.pts.map(([id,l])=>`${l.replace(/^Hall /,"")} ${fmt(last.values[id])}`).join(" · ")));
+  return lines.join("\n");
+}
+function updateWa(){}
+
+/* Image du plan avec les températures, pour WhatsApp */
+const PIN_COL={froid:"#2463ad",ok:"#237350",chaud:"#c0491a",na:"#6b7785"};
+function rrect(g,x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.arcTo(x+w,y,x+w,y+h,r);g.arcTo(x+w,y+h,x,y+h,r);g.arcTo(x,y+h,x,y,r);g.arcTo(x,y,x+w,y,r);g.closePath()}
+async function planImage(){
+  const dr=dayRounds(),last=dr[dr.length-1];if(!last)return null;
+  try{await document.fonts.ready}catch(e){}
+  const img=document.querySelector(".map img");
+  await planReady;if(!img.naturalWidth)return null;
+  const W=img.naturalWidth,H=img.naturalHeight,TOP=118,BOT=64;
+  const c=document.createElement("canvas");c.width=W;c.height=H+TOP+BOT;
+  const g=c.getContext("2d"),NUM="Barlow Semi Condensed, Arial, sans-serif",TXT="Barlow, Arial, sans-serif";
+  g.fillStyle="#ffffff";g.fillRect(0,0,c.width,c.height);
+  g.drawImage(img,0,TOP,W,H);
+  g.fillStyle="#18212b";g.font="700 42px "+NUM;g.textAlign="left";g.textBaseline="alphabetic";
+  g.fillText("Températures des halls – Eurexpo",28,56);
+  const dt=new Date(last.at).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});
+  g.fillStyle="#5d6b78";g.font="500 26px "+TXT;
+  g.fillText(`${dt} à ${hhmm(last.at)}${last.salon?" · "+last.salon:""}${last.auteur?" · relevé par "+last.auteur:""}${last.ext!=null?" · Ext. Bron "+fmt(last.ext)+" °C":""}${last.dju!=null?" · DJU veille "+fmt(last.dju):""}`,28,96);
+  g.strokeStyle="#d5dce3";g.lineWidth=2;g.beginPath();g.moveTo(0,TOP-1);g.lineTo(W,TOP-1);g.stroke();
+  g.textAlign="center";
+  POINTS.forEach(p=>{
+    const v=last.values[p.id],x=p.x/100*W,y=TOP+p.y/100*H,t1=fmt(v),t2=p.short||"";
+    g.font="700 27px "+NUM;const w1=g.measureText(t1).width;
+    g.font="600 13px "+TXT;const w2=g.measureText(t2).width;
+    const w=Math.max(w1,w2)+18,h=46;
+    g.shadowColor="rgba(0,0,0,.28)";g.shadowBlur=4;g.shadowOffsetY=1;
+    rrect(g,x-w/2,y-h/2,w,h,8);g.fillStyle=PIN_COL[status(v)];g.fill();
+    g.shadowColor="transparent";g.shadowBlur=0;g.shadowOffsetY=0;
+    g.fillStyle="#ffffff";g.font="700 27px "+NUM;g.fillText(t1,x,y+5);
+    g.font="600 13px "+TXT;g.fillText(t2,x,y+19);
+  });
+  const vals=POINTS.map(p=>last.values[p.id]).filter(v=>typeof v==="number");
+  const nC=vals.filter(v=>v<seuils.min).length,nH=vals.filter(v=>v>seuils.max).length;
+  const fy=TOP+H+40;g.textAlign="left";let fx=28;
+  [["froid",`Sous ${fmt(seuils.min)} °C (${nC})`],["ok",`Entre ${fmt(seuils.min)} et ${fmt(seuils.max)} °C`],["chaud",`Au-dessus de ${fmt(seuils.max)} °C (${nH})`]].forEach(([k,l])=>{
+    g.fillStyle=PIN_COL[k];rrect(g,fx,fy-20,26,26,5);g.fill();
+    g.fillStyle="#18212b";g.font="500 24px "+TXT;g.fillText(l,fx+36,fy);fx+=36+g.measureText(l).width+40});
+  return c;
+}
+$("wa").onclick=async()=>{
+  const c=await planImage();if(!c)return toast("Aucun relevé à envoyer");
+  const blob=await new Promise(r=>c.toBlob(r,"image/png"));
+  try{
+    const file=new File([blob],"temperatures-halls.png",{type:"image/png"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:"Températures des halls"});return}
+  }catch(e){if(e&&e.name==="AbortError")return}
+  const url=c.toDataURL("image/png");
+  $("shot-img").src=url;$("shot-dl").href=url;
+  const t=summaryText();$("shot-txt").href="https:\/\/wa.me/"+(t?"?text="+encodeURIComponent(t):"");
+  $("shotbox").hidden=false;
+};
+$("shot-close").onclick=()=>$("shotbox").hidden=true;
+$("shotbox").onclick=e=>{if(e.target.id==="shotbox")$("shotbox").hidden=true};
+$("copy").onclick=async()=>{
+  const txt=summaryText();if(!txt)return toast("Aucun relevé à copier");
+  try{await navigator.clipboard.writeText(txt);toast("Résumé copié")}
+  catch(e){const ta=document.createElement("textarea");ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("Résumé copié")}catch(e2){toast("Copie impossible")};ta.remove()}
+};
+
+/* Extraction Excel par salon : fichier .xlsx fabriqué dans le navigateur à partir des relevés déjà chargés (aucun service extérieur) */
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+const crc32=b=>{let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=CRC[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0};
+function zip(files){ /* archive ZIP sans compression */
+  const enc=new TextEncoder(),parts=[],cd=[];let off=0;
+  const u16=v=>[v&255,(v>>>8)&255],u32=v=>[v&255,(v>>>8)&255,(v>>>16)&255,(v>>>24)&255];
+  files.forEach(([name,txt])=>{const n=enc.encode(name),d=enc.encode(txt),c=crc32(d);
+    const common=[...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(c),...u32(d.length),...u32(d.length),...u16(n.length),...u16(0)];
+    const lh=new Uint8Array([...u32(0x04034b50),...common]);parts.push(lh,n,d);
+    cd.push(new Uint8Array([...u32(0x02014b50),...u16(20),...common,...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),n);
+    off+=lh.length+n.length+d.length});
+  const cdLen=cd.reduce((a,b)=>a+b.length,0);
+  return new Blob([...parts,...cd,new Uint8Array([...u32(0x06054b50),0,0,0,0,...u16(files.length),...u16(files.length),...u32(cdLen),...u32(off),0,0])],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+const xe=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"");
+const colName=i=>{let s="";i++;while(i){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=(i-m-1)/26}return s};
+/* cellule : null | texte | nombre | {v, s} ; styles : 1 date-heure, 2 nombre 0,0, 3 en-tête gras, 4 titre */
+function sheetXml(sh){
+  const rows=sh.rows.map((r,ri)=>`<row r="${ri+1}">${r.map((c,ci)=>{
+    if(c==null||c==="")return "";const o=typeof c==="object"?c:{v:c},ref=colName(ci)+(ri+1),s=o.s?` s="${o.s}"`:"";
+    return typeof o.v==="number"&&isFinite(o.v)?`<c r="${ref}"${s}><v>${o.v}</v></c>`:`<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xe(o.v)}</t></is></c>`}).join("")}</row>`).join("");
+  const fr=sh.headRow+1,last=colName(sh.rows[sh.headRow].length-1);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`+
+    `<sheetViews><sheetView workbookViewId="0"><pane xSplit="${sh.freezeCols}" ySplit="${fr}" topLeftCell="${colName(sh.freezeCols)}${fr+1}" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>`+
+    `<cols>${sh.cols.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join("")}</cols><sheetData>${rows}</sheetData>`+
+    (sh.rows.length>fr?`<autoFilter ref="A${fr}:${last}${sh.rows.length}"/>`:"")+`</worksheet>`;
+}
+function xlsxBlob(sheets){
+  const wbx=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s,i)=>`<sheet name="${xe(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("")}</sheets>${(dn=>dn?`<definedNames>${dn}</definedNames>`:"")(sheets.map((s,i)=>s.rows.length>s.headRow+1?`<definedName name="_xlnm._FilterDatabase" localSheetId="${i}" hidden="1">'${xe(s.name)}'!$A$${s.headRow+1}:$${colName(s.rows[s.headRow].length-1)}$${s.rows.length}</definedName>`:"").join(""))}</workbook>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="dd/mm/yyyy hh:mm"/><numFmt numFmtId="165" formatCode="0.0"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F0"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  return zip([
+    ["[Content_Types].xml",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+    ["_rels/.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ["xl/workbook.xml",wbx],
+    ["xl/_rels/workbook.xml.rels",`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+    ["xl/styles.xml",styles],
+    ...sheets.map((s,i)=>[`xl/worksheets/sheet${i+1}.xml`,sheetXml(s)])
+  ]);
+}
+const salonKey=s=>String(s||"").trim().replace(/\s+/g," ").toLowerCase();
+function salonGroups(){
+  const m=new Map();
+  rounds.forEach(r=>{const k=salonKey(r.salon);let g=m.get(k);if(!g)m.set(k,g={key:k,names:{},list:[]});g.list.push(r);const n=String(r.salon||"").trim();if(n)g.names[n]=(g.names[n]||0)+1});
+  return [...m.values()].map(g=>{g.list.sort((a,b)=>a.at<b.at?-1:1);
+    g.name=Object.keys(g.names).sort((a,b)=>g.names[b]-g.names[a])[0]||"(salon non renseigné)";
+    g.first=g.list[0].at;g.last=g.list[g.list.length-1].at;return g}).sort((a,b)=>a.last<b.last?1:-1);
+}
+const dShort=iso=>new Date(iso).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});
+const periode=g=>dayKey(g.first)===dayKey(g.last)?"le "+dShort(g.first):"du "+dShort(g.first)+" au "+dShort(g.last);
+let xGroups=[];
+function xInfo(){const v=$("x-salon").value,g=v==="*"?null:xGroups.find(g=>g.key===v);
+  const n=g?g.list.length:rounds.length;
+  $("x-info").textContent=g?`${n} relevé${n>1?"s":""} ${periode(g)}.`:`${n} relevé${n>1?"s":""} au total, tous salons confondus.`}
+$("xls").onclick=()=>{
+  if(!loaded)return toast("Patientez, chargement en cours");
+  if(!rounds.length)return toast("Aucun relevé à extraire");
+  xGroups=salonGroups();
+  const cur=salonKey(dayRounds().slice(-1)[0]?.salon);
+  $("x-salon").innerHTML=xGroups.map(g=>`<option value="${esc(g.key)}"${g.key===cur?" selected":""}>${esc(g.name)} – ${periode(g)}</option>`).join("")+`<option value="*">Tous les salons</option>`;
+  $("x-err").hidden=true;xInfo();$("xbox").hidden=false;
+};
+$("x-salon").onchange=xInfo;
+$("x-cancel").onclick=()=>$("xbox").hidden=true;
+$("xbox").onclick=e=>{if(e.target.id==="xbox")$("xbox").hidden=true};
+function buildWorkbook(list,titre,per){
+  const serial=iso=>{const d=new Date(iso);return (d.getTime()-d.getTimezoneOffset()*60000)/86400000+25569};
+  const num=v=>typeof v==="number"&&!isNaN(v)?v:null,dec=v=>v==null?null:{v,s:2},H=v=>({v,s:3});
+  const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length*10)/10:null;
+  const sous=`Sous ${fmt(seuils.min)} °C`,dessus=`Au-dessus de ${fmt(seuils.max)} °C`;
+  const sub=`Relevés ${per} · plage de confort ${fmt(seuils.min)} à ${fmt(seuils.max)} °C`;
+  const salonName={};salonGroups().forEach(g=>{if(g.key)salonName[g.key]=g.name});
+  const head=["Date et heure","Salon","Saisi par","Ext. Bron (°C)","DJU veille",...POINTS.map(p=>p.label),"Moyenne","Mini","Maxi",sous,dessus];
+  const r1=[[{v:`Températures des halls – Eurexpo · ${titre}`,s:4}],[sub],[],head.map(H)];
+  list.forEach(r=>{const vals=POINTS.map(p=>num(r.values[p.id])),ok=vals.filter(v=>v!=null);
+    r1.push([{v:serial(r.at),s:1},salonName[salonKey(r.salon)]||"",r.auteur||"",dec(num(r.ext)),dec(num(r.dju)),...vals.map(dec),
+      dec(avg(ok)),dec(ok.length?Math.min(...ok):null),dec(ok.length?Math.max(...ok):null),ok.filter(v=>v<seuils.min).length,ok.filter(v=>v>seuils.max).length])});
+  const r2=[[{v:`Synthèse par point – ${titre}`,s:4}],[sub],[],["Secteur","Point de mesure","Nb mesures","Moyenne","Mini","Maxi",sous,dessus,"Dernière valeur"].map(H)];
+  POINTS.forEach(p=>{const s=list.map(r=>num(r.values[p.id])).filter(v=>v!=null);
+    r2.push([p.sector,p.label,s.length,dec(avg(s)),dec(s.length?Math.min(...s):null),dec(s.length?Math.max(...s):null),
+      s.filter(v=>v<seuils.min).length,s.filter(v=>v>seuils.max).length,dec(s.length?s[s.length-1]:null)])});
+  return xlsxBlob([
+    {name:"Relevés",rows:r1,headRow:3,freezeCols:1,cols:head.map((h,i)=>i===0?17:i<3?18:Math.max(9,Math.min(16,h.length+2)))},
+    {name:"Par point",rows:r2,headRow:3,freezeCols:2,cols:[16,26,11,10,8,8,12,16,14]}]);
+}
+$("x-go").onclick=async()=>{
+  const v=$("x-salon").value,g=v==="*"?null:xGroups.find(g=>g.key===v);
+  const list=g?g.list:[...rounds].sort((a,b)=>a.at<b.at?-1:1),titre=g?g.name:"Tous les salons";
+  if(!list.length)return;
+  const per=periode(g||{first:list[0].at,last:list[list.length-1].at});
+  const slug=titre.normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9]+/g,"_").replace(/^_|_$/g,"")||"salon";
+  const fname=`Temperatures_halls_${slug}_${dayKey(list[0].at)}.xlsx`;
+  $("x-err").hidden=true;
+  let blob;
+  try{blob=buildWorkbook(list,titre,per)}catch(e){$("x-err").textContent="Fichier non créé : "+errMsg(e);$("x-err").hidden=false;return}
+  /* Ordinateur (Chrome, Edge) : fenêtre « Enregistrer sous » pour choisir le dossier ; sinon téléchargement du navigateur */
+  if(window.showSaveFilePicker){
+    try{
+      const h=await showSaveFilePicker({suggestedName:fname,types:[{description:"Classeur Excel",accept:{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"]}}]});
+      const w=await h.createWritable();await w.write(blob);await w.close();
+      $("xbox").hidden=true;return toast("Fichier enregistré : "+h.name);
+    }catch(e){if(e&&e.name==="AbortError")return;}
+  }
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+  $("xbox").hidden=true;toast("Fichier Excel téléchargé");
+};
+
+let tt;function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2600)}
+$("day").onchange=e=>{day=e.target.value;render()};
+
+
+function needCode(){const c=store.get("codeSaisie");if(!c)toast("Saisissez d'abord votre code dans « Nouveau relevé »");return c}
+async function saveSeuils(){
+  const mn=parseFloat($("smin").value),mx=parseFloat($("smax").value),undo=()=>{$("smin").value=seuils.min;$("smax").value=seuils.max};
+  if(isNaN(mn)||isNaN(mx)||mn>=mx){undo();return toast("Le seuil bas doit être inférieur au seuil haut")}
+  if(mn===seuils.min&&mx===seuils.max)return;
+  const code=needCode();if(!code)return undo();
+  try{await ensureSession(code)}catch(e){undo();return toast(errMsg(e))}
+  F.setDoc(F.doc(db,"TempReglages","seuils"),{min:mn,max:mx}).catch(e=>{refused(e,"Changement de plage");undo()});
+  toast("Plage enregistrée");
+}
+$("smin").onchange=saveSeuils;$("smax").onchange=saveSeuils;
+
+function localNow(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)}
+$("new").onclick=()=>{
+  if(!loaded)return toast("Patientez, chargement en cours");
+  const lastAll=[...rounds].sort((a,b)=>a.at<b.at?1:-1)[0];
+  $("f-at").value=localNow();$("f-salon").value=lastAll?.salon||"";$("f-err").hidden=true;
+  $("f-auteur").value=store.get("auteur");$("f-code").value=store.get("codeSaisie");
+  $("f-points").innerHTML=SECTORS.map(s=>`<div class="fgroup"><h3>${s.name}</h3>${s.pts.map(([id,l])=>`<label class="fpoint"><span>${esc(l)}</span><input type="text" inputmode="decimal" id="f-${id}" value="${lastAll?.values?.[id]!=null?fmt(lastAll.values[id]):""}"></label>`).join("")}</div>`).join("");
+  $("overlay").hidden=false;
+};
+$("f-cancel").onclick=()=>$("overlay").hidden=true;
+$("overlay").onclick=e=>{if(e.target.id==="overlay")$("overlay").hidden=true};
+$("form").onsubmit=async e=>{
+  e.preventDefault();
+  const values={},bad=[];
+  POINTS.forEach(p=>{const el=$("f-"+p.id),raw=el.value.trim().replace(",",".");el.classList.remove("bad");
+    if(raw==="")return;const v=Number(raw);if(isNaN(v)||v<-10||v>45){bad.push(p.label);el.classList.add("bad")}else values[p.id]=Math.round(v*10)/10});
+  const at=$("f-at").value,code=$("f-code").value.trim(),err=m=>{$("f-err").textContent=m;$("f-err").hidden=false};
+  if(!at)return err("Indiquez la date et l'heure du relevé.");
+  if(!code)return err("Saisissez le code de saisie communiqué par Eurexpo.");
+  if(bad.length)return err("Valeur à corriger : "+bad.join(", ")+" (nombre entre -10 et 45).");
+  if(!Object.keys(values).length)return err("Saisissez au moins une température.");
+  const iso=new Date(at).toISOString();
+  $("f-save").disabled=true;$("f-save").textContent="Enregistrement…";
+  try{
+    await ensureSession(code);
+    const auteur=$("f-auteur").value.trim().slice(0,80);
+    const round={at:iso,salon:$("f-salon").value.trim().slice(0,120),auteur,values,ext:null,dju:null,uid:auth.currentUser.uid,cree:new Date().toISOString()};
+    /* Enregistré tout de suite sur l'appareil, envoyé au serveur dès que possible (même sans réseau) */
+    F.setDoc(F.doc(db,"TempReleves",newCid()),round).catch(ex=>refused(ex,"Relevé"));
+    store.set("codeSaisie",code);store.set("auteur",auteur);
+    $("overlay").hidden=true;day=dayKey(iso);render();
+    toast(navigator.onLine?"Relevé enregistré":"Pas de réseau : relevé gardé sur l'appareil, envoi automatique");
+  }catch(ex){err("Relevé non enregistré : "+errMsg(ex))}
+  finally{$("f-save").disabled=false;$("f-save").textContent="Enregistrer"}
+};
+
+let pendingDel=null;
+$("hist").onclick=async e=>{
+  const b=e.target.closest("[data-del]");if(!b)return;
+  if(pendingDel!==b.dataset.del){pendingDel=b.dataset.del;b.textContent="confirmer ?";return}
+  pendingDel=null;
+  const code=needCode();if(!code)return render();
+  try{await ensureSession(code)}catch(ex){toast(errMsg(ex));return render()}
+  F.deleteDoc(F.doc(db,"TempReleves",b.dataset.del)).catch(ex=>refused(ex,"Suppression"));
+  toast("Relevé supprimé");
+};
+
+render();
+loadPlan();start();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+
+</script>
+</body>
+</html>

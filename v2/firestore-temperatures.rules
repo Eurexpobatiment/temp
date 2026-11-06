@@ -1,0 +1,45 @@
+    // ===================== Appli Températures halls (Dalkia) =====================
+    // Bloc à coller dans les règles Firestore du projet equipe-batiment, JUSTE AVANT les deux
+    // dernières accolades « } » de la fin (à l'intérieur de « match /databases/{db}/documents { »).
+    // Le code de saisie est dans le document TempSecret/code (champ « code »), que personne ne peut lire.
+
+    function tSecret() { return get(/databases/$(db)/documents/TempSecret/code).data.code; }
+    function tSession() {
+      return request.auth != null
+        && exists(/databases/$(db)/documents/TempSessions/$(request.auth.uid))
+        && get(/databases/$(db)/documents/TempSessions/$(request.auth.uid)).data.code == tSecret();
+    }
+
+    // Relevés : lecture libre (comme l'appli actuelle), écriture avec le code de saisie
+    match /TempReleves/{id} {
+      allow read: if true;
+      allow create: if tSession() && id.size() <= 40
+        && request.resource.data.keys().hasOnly(['at', 'salon', 'auteur', 'values', 'ext', 'dju', 'uid', 'cree'])
+        && request.resource.data.at is string && request.resource.data.at.size() <= 40
+        && request.resource.data.salon is string && request.resource.data.salon.size() <= 120
+        && request.resource.data.auteur is string && request.resource.data.auteur.size() <= 80
+        && request.resource.data.values is map && request.resource.data.values.size() <= 80;
+      // mise à jour : seulement la météo (ajoutée par le script Google)
+      allow update: if tSession() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ext', 'dju']);
+      allow delete: if tSession();
+    }
+
+    // Plage de confort et liste des points de mesure
+    match /TempReglages/{id} {
+      allow read: if true;
+      allow create, update: if tSession() && (
+        (id == 'seuils' && request.resource.data.keys().hasOnly(['min', 'max'])
+          && request.resource.data.min is number && request.resource.data.max is number
+          && request.resource.data.min < request.resource.data.max)
+        || (id == 'points' && request.resource.data.keys().hasOnly(['json']) && request.resource.data.json is string));
+    }
+
+    // Un appareil qui a donné le bon code (connexion anonyme)
+    match /TempSessions/{uid} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['code', 'at'])
+        && request.resource.data.code == tSecret();
+    }
+    // TempSecret : aucune règle = ni lecture ni écriture depuis les applis (modifiable dans la console seulement)
+    // ===================== fin Températures =====================
