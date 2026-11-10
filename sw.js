@@ -1,6 +1,6 @@
 /* Service worker de la version Firebase : garde l'écran de l'appli et les modules Firebase sur l'appareil.
    Les relevés eux-mêmes sont gardés par Firebase (copie locale), pas ici. */
-const CACHE = "temperatures-fb-v3";
+const CACHE = "temperatures-fb-v4";
 const FBV = "10.14.1";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
   `https://www.gstatic.com/firebasejs/${FBV}/firebase-app.js`,
