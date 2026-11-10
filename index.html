@@ -251,6 +251,28 @@ let auth;try{auth=A.initializeAuth(fbApp,{persistence:[A.browserLocalPersistence
 let db;
 try{db=F.initializeFirestore(fbApp,{localCache:F.persistentLocalCache({tabManager:F.persistentMultipleTabManager()})})}
 catch(e){db=F.getFirestore(fbApp)} /* navigation privée : pas de copie sur l'appareil */
+/* Écoute en direct qui ne lâche pas : après un refus passager (jeton de connexion expiré pendant que l'onglet
+   était en arrière-plan, réseau…) on renouvelle le jeton et on réécoute, de plus en plus espacé, et tout de suite
+   au retour sur l'onglet. L'erreur n'est signalée qu'au 3e échec d'affilée. */
+function onSnap(ref, ...args) {
+  const opts = (args[0] && typeof args[0] === 'object') ? args.shift() : {};
+  const next = args[0], err = args[1] || (() => {});
+  let un = null, fini = false, n = 0, t = 0;
+  const go = () => {
+    if (fini) return;
+    un = F.onSnapshot(ref, opts, s => { n = 0; next(s); }, e => {
+      un = null; n++;
+      if ((e.code === 'permission-denied' || e.code === 'unauthenticated') && auth && auth.currentUser) auth.currentUser.getIdToken(true).catch(() => {});
+      if (n === 3) err(e);
+      t = setTimeout(go, Math.min(30000, 1000 * 2 ** Math.min(n, 5)));
+    });
+  };
+  const vis = () => { if (!document.hidden && !un && !fini) { clearTimeout(t); go(); } };
+  document.addEventListener('visibilitychange', vis);
+  go();
+  return () => { fini = true; clearTimeout(t); document.removeEventListener('visibilitychange', vis); if (un) un(); };
+}
+
 const DAYS_KEPT_ON_SCREEN=60;
 
 function fbErr(e){
@@ -311,15 +333,15 @@ function pendNote(){
 function start(){
   const fail=e=>{$("status").textContent="Relevés indisponibles : "+fbErr(e)};
   try{const c=JSON.parse(store.get("pointsCache")||"null");if(c&&c.length){setPoints(c);gotPoints=true}}catch(e){}
-  F.onSnapshot(F.doc(db,"TempReglages","points"),s=>{
+  onSnap(F.doc(db,"TempReglages","points"),s=>{
     if(!s.exists())return;const list=JSON.parse(s.data().json||"[]");if(!list.length)return;
     setPoints(list);store.set("pointsCache",JSON.stringify(list));gotPoints=true;refresh();
   },fail);
-  F.onSnapshot(F.doc(db,"TempReglages","seuils"),s=>{
+  onSnap(F.doc(db,"TempReglages","seuils"),s=>{
     if(!s.exists())return;const d=s.data();if(typeof d.min==="number"&&typeof d.max==="number"){seuils={min:d.min,max:d.max};refresh()}
   },fail);
   const since=new Date(Date.now()-DAYS_KEPT_ON_SCREEN*86400000).toISOString();
-  F.onSnapshot(F.query(F.collection(db,"TempReleves"),F.where("at",">=",since)),{includeMetadataChanges:true},s=>{
+  onSnap(F.query(F.collection(db,"TempReleves"),F.where("at",">=",since)),{includeMetadataChanges:true},s=>{
     rounds=s.docs.map(d=>{const r=d.data();return {...r,values:r.values||{},ext:r.ext??null,dju:r.dju??null,_id:d.id,_pending:d.metadata.hasPendingWrites}});
     fromCache=s.metadata.fromCache;gotRounds=true;refresh();
   },fail);
