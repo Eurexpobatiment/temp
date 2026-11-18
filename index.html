@@ -218,7 +218,7 @@ td.froid{color:var(--cold);font-weight:600} td.chaud{color:var(--hot);font-weigh
 
 <style>body{margin:0;font-size:15px}[hidden]{display:none!important}</style>
 <script type="module">
-let POINTS=[],SECTORS=[],rounds=[],seuils={min:19,max:22},day=null,loaded=false;
+let POINTS=[],SECTORS=[],rounds=[],seuils={min:19,max:22},day=null,loaded=false,suivre=true;
 const $=id=>document.getElementById(id);
 const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return ""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -358,7 +358,7 @@ function dayRounds(){return rounds.filter(r=>dayKey(r.at)===day).sort((a,b)=>a.a
 
 function render(){
   const keys=[...new Set(rounds.map(r=>dayKey(r.at)))].sort().reverse();
-  if(!day||!keys.includes(day)) day=keys[0]||null;
+  if(suivre||!day||!keys.includes(day)) day=keys[0]||null;
   $("day").innerHTML=keys.length?keys.map(k=>`<option value="${k}"${k===day?" selected":""}>${dayLabel(k)}</option>`).join(""):`<option>Aucun relevé</option>`;
   $("smin").value=seuils.min;$("smax").value=seuils.max;
   const dr=dayRounds(),last=dr[dr.length-1],prev=dr[dr.length-2];
@@ -586,7 +586,7 @@ $("x-go").onclick=async()=>{
 };
 
 let tt;function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2600)}
-$("day").onchange=e=>{day=e.target.value;render()};
+$("day").onchange=e=>{day=e.target.value;suivre=e.target.selectedIndex===0;render()};
 
 
 function needCode(){const c=store.get("codeSaisie");if(!c)toast("Saisissez d'abord votre code dans « Nouveau relevé »");return c}
