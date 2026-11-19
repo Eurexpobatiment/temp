@@ -410,7 +410,8 @@ function summaryText(){
   const dr=dayRounds(),last=dr[dr.length-1];if(!last)return null;
   const d=new Date(last.at).toLocaleDateString("fr-FR");
   const lines=[`Températures halls Eurexpo – ${d} ${hhmm(last.at)}${last.salon?" – "+last.salon:""}`,`Plage de confort : ${fmt(seuils.min)} à ${fmt(seuils.max)} °C`];
-  if(last.ext!=null||last.dju!=null)lines.push(`Extérieur Bron : ${fmt(last.ext)} °C · DJU veille : ${fmt(last.dju)}`);
+  const ex=[...dr].reverse().find(r=>r.ext!=null);
+  if(ex||last.dju!=null)lines.push(`Extérieur Bron : ${ex?fmt(ex.ext)+" °C"+(ex!==last?" (relevé de "+hhmm(ex.at)+")":""):"en attente"} · DJU veille : ${fmt(last.dju)}`);
   lines.push("");
   const out=POINTS.filter(p=>["froid","chaud"].includes(status(last.values[p.id])));
   if(out.length){lines.push("Hors plage :");out.forEach(p=>lines.push(`  ${p.label} : ${fmt(last.values[p.id])} °C (${status(last.values[p.id])})`));lines.push("")}
@@ -432,11 +433,18 @@ async function planImage(){
   const g=c.getContext("2d"),NUM="Barlow Semi Condensed, Arial, sans-serif",TXT="Barlow, Arial, sans-serif";
   g.fillStyle="#ffffff";g.fillRect(0,0,c.width,c.height);
   g.drawImage(img,0,TOP,W,H);
+  /* Température extérieure (Bron) en encart à droite de l'en-tête ; si la météo du dernier relevé n'est pas encore arrivée (ajoutée sous 10 min), on prend la plus récente du jour */
+  const ex=[...dr].reverse().find(r=>r.ext!=null),exT=ex?fmt(ex.ext)+" °C":"en attente",exL=ex&&ex!==last?"Extérieur Bron · "+hhmm(ex.at):"Extérieur Bron";
+  g.font="700 44px "+NUM;const ew1=g.measureText(exT).width;g.font="600 18px "+TXT;const ew2=g.measureText(exL).width;
+  const ew=Math.max(ew1,ew2)+36,eh=94,ex0=W-28-ew;
+  rrect(g,ex0,12,ew,eh,12);g.fillStyle="#18212b";g.fill();
+  g.textAlign="center";g.fillStyle="#c9d3dc";g.font="600 18px "+TXT;g.fillText(exL,ex0+ew/2,42);
+  g.fillStyle="#ffffff";g.font="700 44px "+NUM;g.fillText(exT,ex0+ew/2,88);g.textAlign="left";g.textBaseline="alphabetic";
   g.fillStyle="#18212b";g.font="700 42px "+NUM;g.textAlign="left";g.textBaseline="alphabetic";
-  g.fillText("Températures des halls – Eurexpo",28,56);
+  g.fillText("Températures des halls – Eurexpo",28,56,ex0-56);
   const dt=new Date(last.at).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});
   g.fillStyle="#5d6b78";g.font="500 26px "+TXT;
-  g.fillText(`${dt} à ${hhmm(last.at)}${last.salon?" · "+last.salon:""}${last.auteur?" · relevé par "+last.auteur:""}${last.ext!=null?" · Ext. Bron "+fmt(last.ext)+" °C":""}${last.dju!=null?" · DJU veille "+fmt(last.dju):""}`,28,96);
+  g.fillText(`${dt} à ${hhmm(last.at)}${last.salon?" · "+last.salon:""}${last.auteur?" · relevé par "+last.auteur:""}${last.dju!=null?" · DJU veille "+fmt(last.dju):""}`,28,96,ex0-56);
   g.strokeStyle="#d5dce3";g.lineWidth=2;g.beginPath();g.moveTo(0,TOP-1);g.lineTo(W,TOP-1);g.stroke();
   g.textAlign="center";
   POINTS.forEach(p=>{
